@@ -71,3 +71,59 @@ Square Sandbox connection: FAILED
 HTTP Status: 401
 Error: UNAUTHORIZED
 ```
+
+---
+
+## Phase 2 — Square Inventory API Test
+
+### Purpose
+Verifies that SupplySense AI can successfully connect and retrieve inventory counts from the Square Sandbox Inventory API (`GET /v2/inventory/counts`) scoped to the configured `SQUARE_LOCATION_ID`.
+
+### Sandbox Environment
+- Base URL: `https://connect.squareupsandbox.com`
+- Environment: `sandbox`
+- Endpoint: `/v2/inventory/counts`
+
+### Required Environment Variables
+Ensure the following variables are defined in your `.env` file (loaded via `python-dotenv`):
+- `SQUARE_ENVIRONMENT`: Set to `sandbox`
+- `SQUARE_BASE_URL`: `https://connect.squareupsandbox.com`
+- `SQUARE_APPLICATION_ID`: Your Square Sandbox Application ID
+- `SQUARE_ACCESS_TOKEN`: Your Square Sandbox Access Token
+- `SQUARE_LOCATION_ID`: Your target Square Location ID
+
+> **Security Warning**:
+> Never commit real access tokens or credentials to version control. Always keep `.env` excluded via `.gitignore`. The test scripts never output full tokens or authorization headers to the terminal.
+
+### Test Command
+Run the test from the repository root:
+
+```bash
+python services/realtime-api/test_square_inventory.py
+```
+
+### Expected Output
+
+```text
+========================================
+SupplySense AI - Square Inventory Test
+========================================
+
+Environment : sandbox
+Base URL    : https://connect.squareupsandbox.com
+Application : CONFIGURED
+Token       : CONFIGURED
+Location ID : CONFIGURED
+
+Calling Square Sandbox Inventory API...
+
+Square Inventory API: SUCCESS
+HTTP Status: 200
+Inventory records received: 0
+
+The Square Sandbox API connection works, but no inventory records currently exist.
+```
+
+### Meaning of Zero Inventory Records
+In a newly initialized Square Sandbox account, no inventory counts exist by default until catalog items and stock adjustments are created. A response of `HTTP 200` with `Inventory records received: 0` is considered a completely **successful API integration**, confirming that credentials and permissions are valid.
+
