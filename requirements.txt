@@ -1,0 +1,7 @@
+pymysql
+kafka-python
+pandas
+python-dotenv
+scikit-learn
+requests
+

@@ -1,0 +1,30 @@
+{
+  "metadata": {
+    "model": "Naive Baseline",
+    "target": "demand",
+    "entity": "product_category",
+    "time_granularity": "Weekly (ISO calendar week)",
+    "baseline_definition": "predicted_demand(C, T) = observed_demand(C, T - 1 week)",
+    "evaluation_method": "one-step-ahead rolling naive forecast",
+    "missing_handling": "zero demand for unobserved preceding calendar weeks",
+    "created_at": "2026-09-20T12:52:57.643476"
+  },
+  "results": [
+    {
+      "model": "Naive Baseline",
+      "split": "Validation",
+      "prediction_count": 807,
+      "mae": 7.980173482032218,
+      "rmse": 15.319561726739456,
+      "r2": 0.8991939985448015
+    },
+    {
+      "model": "Naive Baseline",
+      "split": "Test",
+      "prediction_count": 770,
+      "mae": 9.463636363636363,
+      "rmse": 17.991231630558694,
+      "r2": 0.835112103485872
+    }
+  ]
+}
