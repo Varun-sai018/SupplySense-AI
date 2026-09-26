@@ -4,4 +4,6 @@ pandas
 python-dotenv
 scikit-learn
 requests
-
+fastapi
+uvicorn
+httpx

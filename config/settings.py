@@ -43,4 +43,5 @@ SQUARE_BASE_URL = _get_env("SQUARE_BASE_URL", required=False)
 SQUARE_APPLICATION_ID = _get_env("SQUARE_APPLICATION_ID", required=False)
 SQUARE_ACCESS_TOKEN = _get_env("SQUARE_ACCESS_TOKEN", required=False)
 SQUARE_LOCATION_ID = _get_env("SQUARE_LOCATION_ID", required=False)
+SQUARE_WEBHOOK_SIGNATURE_KEY = _get_env("SQUARE_WEBHOOK_SIGNATURE_KEY", required=False) or _get_env("SQUARE_SIGNATURE_KEY", required=False)
 

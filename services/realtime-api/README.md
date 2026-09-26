@@ -127,3 +127,79 @@ The Square Sandbox API connection works, but no inventory records currently exis
 ### Meaning of Zero Inventory Records
 In a newly initialized Square Sandbox account, no inventory counts exist by default until catalog items and stock adjustments are created. A response of `HTTP 200` with `Inventory records received: 0` is considered a completely **successful API integration**, confirming that credentials and permissions are valid.
 
+---
+
+## Phase 3 — Local Square Webhook Service
+
+> **Important Note**:
+> **Square Developer Dashboard webhook subscription is intentionally not configured during this phase.**
+> This phase prepares and verifies the complete local FastAPI webhook pipeline before public tunneling (e.g. ngrok or Cloudflare tunnel) and Square Dashboard subscription are configured.
+
+### Purpose
+Implements the local FastAPI webhook ingestion service for Square operational events, handling signature verification, event normalization, MySQL persistence (`dataset_events` & `dataset_metadata`), and Kafka publishing (`dataset-events` topic).
+
+### Local Service Architecture
+
+```text
+Square Webhook Payload
+         ↓
+POST /webhooks/square (FastAPI @ http://127.0.0.1:8000)
+         ↓
+HMAC-SHA256 Signature Verification (SQUARE_WEBHOOK_SIGNATURE_KEY)
+         ↓
+Square Event Adapter (inventory.count.updated -> Inventory / DATA_UPDATED)
+         ↓
+MySQL Persistence (dataset_events table & dataset_metadata version increment)
+         ↓
+Kafka Producer (Publish normalized event to dataset-events topic)
+         ↓
+Dependency Engine Evaluation (ALL / ANY / QUORUM rules)
+```
+
+### Endpoints
+
+- **`GET /health`**: Health check returning service status and environment metadata.
+- **`POST /webhooks/square`**: Ingests Square webhook events, verifies HMAC-SHA256 signatures, normalizes `inventory.count.updated` events, persists them to MySQL, and publishes to Kafka.
+
+### Environment Variables
+Configure in `.env` (sample placeholders in `.env.example`):
+- `SQUARE_ENVIRONMENT`: `sandbox`
+- `SQUARE_BASE_URL`: `https://connect.squareupsandbox.com`
+- `SQUARE_APPLICATION_ID`: Square Sandbox Application ID
+- `SQUARE_ACCESS_TOKEN`: Square Sandbox Access Token
+- `SQUARE_LOCATION_ID`: Square Location ID
+- `SQUARE_WEBHOOK_SIGNATURE_KEY`: Square Webhook Signature Key (from Square Developer Dashboard when webhook subscription is created)
+
+> **Security Rules**:
+> - Never commit `.env` or raw signature keys to Git (`.gitignore` protects `.env`).
+> - Verification calculates HMAC-SHA256 over `notification_url` + `raw_request_body`.
+> - If `SQUARE_WEBHOOK_SIGNATURE_KEY` is set, invalid/missing signatures return `403 Forbidden`.
+
+### Running the Local Service
+
+Start the FastAPI application locally on port 8000:
+
+```bash
+python services/realtime-api/main.py
+```
+
+### Verification Commands
+
+1. **Local Health Check**:
+   ```bash
+   python -c "import requests; print(requests.get('http://127.0.0.1:8000/health').json())"
+   ```
+   **Response**: `{'status': 'ok', 'service': 'SupplySense AI Realtime API', 'environment': 'sandbox', 'base_url': 'https://connect.squareupsandbox.com'}`
+
+2. **Run Webhook Unit & Integration Tests**:
+   ```bash
+   python -m unittest tests/unit/test_square_webhook.py
+   python -m unittest tests/integration/test_square_persistence.py
+   ```
+
+3. **Run Entire Project Test Suite**:
+   ```bash
+   python -m unittest discover -s tests
+   ```
+
+
