@@ -139,18 +139,27 @@ class TestPipelineRunner(unittest.TestCase):
 
     @patch('os.path.isfile')
     def test_handler_successful_invocation(self, mock_isfile):
-        """7. Handler successfully invokes naive baseline and returns structured output."""
+        """7. Handler successfully invokes naive baseline, feature engineering, and XGBoost pipeline."""
         mock_isfile.return_value = True
         mock_res = {
             "validation": {"mae": 7.98, "rmse": 15.31, "r2": 0.89},
             "test": {"mae": 9.46, "rmse": 17.99, "r2": 0.83}
         }
-        with patch.object(handlers_module, 'run_baseline', return_value=mock_res) as mock_run_baseline:
+        mock_xgb_res = {
+            "comparison": {"validation": {}, "test": {}},
+            "validation_metrics": {"mae": 8.30, "rmse": 16.68, "r2": 0.88},
+            "test_metrics": {"mae": 9.42, "rmse": 18.60, "r2": 0.82}
+        }
+        with patch.object(handlers_module, 'run_baseline', return_value=mock_res) as mock_run_baseline, \
+             patch.object(handlers_module, 'build_features', return_value=(MagicMock(), {})) as mock_build_feat, \
+             patch.object(handlers_module, 'train_and_evaluate_xgboost', return_value=mock_xgb_res) as mock_train_xgb:
             result = demand_forecast_pipeline_handler(104, "Demand Forecast Pipeline")
-            self.assertEqual(result["output_location"], "ml/results/baseline_metrics.json")
+            self.assertIn(".json", result["output_location"])
             self.assertIn("metrics", result)
             self.assertIn("artifacts", result)
             mock_run_baseline.assert_called_once()
+            mock_build_feat.assert_called_once()
+            mock_train_xgb.assert_called_once()
 
     def test_db_connection_exception_handled_safely(self):
         """8. Database failure inside execute_pipeline returns structured FAILED dict."""

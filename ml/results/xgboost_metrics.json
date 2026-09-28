@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "model": "XGBoost Regressor",
+    "target": "demand",
+    "features": [
+      "lag_1_demand",
+      "lag_2_demand",
+      "lag_4_demand",
+      "rolling_mean_4w",
+      "rolling_std_4w",
+      "rolling_mean_8w",
+      "demand_trend_ratio",
+      "product_category_enc",
+      "month_of_year",
+      "week_of_year",
+      "quarter"
+    ],
+    "hyperparameters": {
+      "n_estimators": 10,
+      "learning_rate": 0.05,
+      "max_depth": 6,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "random_state": 42,
+      "best_iteration": 9
+    },
+    "created_at": "2026-09-28T12:09:42.914852"
+  },
+  "results": [
+    {
+      "model": "XGBoost",
+      "split": "Validation",
+      "prediction_count": 8,
+      "mae": 5.280067205429077,
+      "rmse": 6.321070511980632,
+      "r2": 0.5433607723722161
+    },
+    {
+      "model": "XGBoost",
+      "split": "Test",
+      "prediction_count": 10,
+      "mae": 5.522728157043457,
+      "rmse": 6.757863495265709,
+      "r2": 0.5701767621586367
+    }
+  ]
+}
