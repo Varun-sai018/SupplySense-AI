@@ -73,11 +73,13 @@ flowchart TD
 
 | Document | Purpose |
 |---|---|
+| **[Phase 4 Pipeline Execution Guide](file:///docs/phase-4/README.md)** | Architecture, execution lifecycle (`RUNNING` → `COMPLETED`/`FAILED`), and idempotency |
+| **[Phase 4 Demo Guide](file:///docs/phase-4/demo-guide.md)** | Step-by-step PowerShell demo commands, SQL verification queries, and expected outputs |
 | **[Developer Runbook](file:///docs/RUNBOOK.md)** | Comprehensive 18-section guide to prerequisites, environment, execution, demo flow, and troubleshooting |
 | **[Quick Start Guide](file:///docs/QUICKSTART.md)** | Minimal sequential commands for launching infrastructure, services, and running the pipeline |
 | **[Command Reference](file:///docs/COMMANDS.md)** | Full list of verified CLI, Docker, and MySQL verification commands |
 | **[System Architecture](file:///docs/architecture.md)** | High-level data flow and architecture specification |
-| **[Database Guide](file:///database/README.md)** | Schema migrations (001–006), table definitions, and volume reset instructions |
+| **[Database Guide](file:///database/README.md)** | Schema migrations (001–008), table definitions, and volume reset instructions |
 | **[Machine Learning Guide](file:///ml/README.md)** | Forecasting problem formulation, data preparation, splitting, and baseline benchmark |
 | **[Review-2 Documentation Pack](file:///docs/review-2/README.md)** | Presentation outlines, viva Q&A, demo checklists, and metric summaries |
 
@@ -122,7 +124,9 @@ capstone/
 ├── services/
 │   ├── dependency-engine/  # Kafka consumer & dependency evaluator daemon
 │   ├── event-generator/    # Interactive dataset update simulator
-│   └── kafka-producer/     # MySQL-to-Kafka publisher
+│   ├── kafka-producer/     # MySQL-to-Kafka publisher
+│   ├── pipeline-runner/    # Downstream execution runner & registry
+│   └── realtime-api/       # FastAPI webhook & Square integration
 ├── tests/
 │   ├── integration/    # DB connection & Objective-1 flow tests
 │   └── unit/           # Config, evaluator, split, and baseline unit tests

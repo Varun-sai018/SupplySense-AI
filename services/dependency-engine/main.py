@@ -15,6 +15,9 @@ import importlib
 evaluator_module = importlib.import_module('services.dependency-engine.evaluator')
 evaluate_condition = evaluator_module.evaluate_condition
 
+runner_module = importlib.import_module('services.pipeline-runner.runner')
+execute_pipeline = runner_module.execute_pipeline
+
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -135,7 +138,8 @@ def process_event(event: dict, connection) -> None:
                     pipeline_name, decision_id, triggering_event_id, status
                 ) VALUES (%s, %s, %s, 'RUNNING')
             """, (pipeline_name, decision_id, event_id))
-            print(f"\nPipeline '{pipeline_name}' EXECUTION RECORD CREATED (Status: RUNNING).")
+            execution_id = cursor.lastrowid
+            print(f"\nPipeline '{pipeline_name}' EXECUTION RECORD CREATED (Status: RUNNING, ID: {execution_id}).")
         except pymysql.err.IntegrityError:
             # Fallback for concurrent idempotency race conditions
             logger.info(f"IDEMPOTENCY: Pipeline {pipeline_name} already executed for Event {event_id}.")
@@ -157,7 +161,21 @@ def process_event(event: dict, connection) -> None:
                 print(f"{d_name} -> WAITING")
             logger.info(f"Reset {len(dataset_ids)} dependency datasets to WAITING for pipeline '{pipeline_name}'.")
 
-    connection.commit()
+        connection.commit()
+
+        # 8. Trigger Downstream Pipeline Execution via Pipeline Runner
+        logger.info(f"Invoking pipeline runner for execution #{execution_id} ({pipeline_name})...")
+        runner_result = execute_pipeline(execution_id, pipeline_name, connection)
+        exec_status = runner_result.get("status", "UNKNOWN")
+        print(f"\nPipeline '{pipeline_name}' EXECUTION RESULT: {exec_status}")
+        if exec_status == "COMPLETED":
+            print(f"Output Location: {runner_result.get('output_location')}")
+        elif exec_status == "FAILED":
+            print(f"Error Message  : {runner_result.get('error')}")
+
+    else:
+        connection.commit()
+
     print("Decision processing completed.")
     return decision, reason
 
