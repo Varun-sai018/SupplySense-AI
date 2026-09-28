@@ -17,6 +17,7 @@ if REPO_ROOT not in sys.path:
 from ml.baseline.naive_baseline import run_baseline
 from ml.features.engineer_features import build_features
 from ml.models.train_xgboost import train_and_evaluate_xgboost
+from .forecast_repository import save_forecast_results
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,15 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
       4. Trains and evaluates the XGBoost Regressor with early stopping on validation.
       5. Generates model comparison metrics (Naive vs. XGBoost).
       6. Verifies that output prediction and metric artifacts exist.
-      7. Returns structured results and artifact locations.
+      7. Persists the out-of-sample test forecast predictions into MySQL (forecast_results).
+      8. Returns structured results and artifact locations.
 
     Args:
         execution_id: ID of the pipeline execution record in MySQL.
         pipeline_name: Name of the pipeline being executed.
 
     Returns:
-        Dict containing output artifact location, metrics, and artifact paths.
+        Dict containing output artifact location, metrics, artifact paths, and saved forecast count.
 
     Raises:
         FileNotFoundError: If required prepared datasets are missing.
@@ -62,7 +64,7 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
         raise FileNotFoundError(error_msg)
 
     # 2. Invoke the naive baseline benchmark
-    logger.info("Step 1/3: Running Naive Baseline Benchmark...")
+    logger.info("Step 1/4: Running Naive Baseline Benchmark...")
     try:
         baseline_result = run_baseline()
     except Exception as e:
@@ -71,7 +73,7 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
         raise RuntimeError(error_msg) from e
 
     # 3. Feature engineering
-    logger.info("Step 2/3: Engineering leak-free features...")
+    logger.info("Step 2/4: Engineering leak-free features...")
     try:
         features_path = os.path.join(PROCESSED_DIR, 'forecasting_features.csv')
         features_df, _ = build_features(output_path=features_path)
@@ -81,7 +83,7 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
         raise RuntimeError(error_msg) from e
 
     # 4. Train and evaluate XGBoost
-    logger.info("Step 3/3: Training and evaluating XGBoost Regressor...")
+    logger.info("Step 3/4: Training and evaluating XGBoost Regressor...")
     try:
         xgb_result = train_and_evaluate_xgboost(features_df=features_df)
     except Exception as e:
@@ -111,12 +113,29 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
+    # 6. Persist forecast predictions into MySQL forecast_results table
+    logger.info(f"Step 4/4: Persisting forecast results to MySQL for execution #{execution_id}...")
+    try:
+        saved_count = save_forecast_results(
+            execution_id=execution_id,
+            pipeline_name=pipeline_name,
+            predictions=xgb_test_preds_csv,
+            model_name="XGBoost",
+            model_version="xgboost-v1"
+        )
+        logger.info(f"Successfully persisted {saved_count} forecast predictions into MySQL forecast_results.")
+    except Exception as e:
+        error_msg = f"Failed to persist forecast predictions to MySQL: {e}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg) from e
+
     # Relative path for portable database storage (model comparison is primary)
     rel_output_location = os.path.relpath(output_comparison_json, REPO_ROOT).replace('\\', '/')
 
     logger.info(f"Pipeline '{pipeline_name}' execution #{execution_id} completed successfully.")
     return {
         "output_location": rel_output_location,
+        "forecasts_saved": saved_count,
         "comparison": xgb_result.get("comparison"),
         "metrics": {
             "naive_baseline": baseline_result,

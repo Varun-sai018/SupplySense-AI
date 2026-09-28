@@ -152,14 +152,17 @@ class TestPipelineRunner(unittest.TestCase):
         }
         with patch.object(handlers_module, 'run_baseline', return_value=mock_res) as mock_run_baseline, \
              patch.object(handlers_module, 'build_features', return_value=(MagicMock(), {})) as mock_build_feat, \
-             patch.object(handlers_module, 'train_and_evaluate_xgboost', return_value=mock_xgb_res) as mock_train_xgb:
+             patch.object(handlers_module, 'train_and_evaluate_xgboost', return_value=mock_xgb_res) as mock_train_xgb, \
+             patch.object(handlers_module, 'save_forecast_results', return_value=770) as mock_save_forecast:
             result = demand_forecast_pipeline_handler(104, "Demand Forecast Pipeline")
             self.assertIn(".json", result["output_location"])
             self.assertIn("metrics", result)
             self.assertIn("artifacts", result)
+            self.assertEqual(result.get("forecasts_saved"), 770)
             mock_run_baseline.assert_called_once()
             mock_build_feat.assert_called_once()
             mock_train_xgb.assert_called_once()
+            mock_save_forecast.assert_called_once()
 
     def test_db_connection_exception_handled_safely(self):
         """8. Database failure inside execute_pipeline returns structured FAILED dict."""
