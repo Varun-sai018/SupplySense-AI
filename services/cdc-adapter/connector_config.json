@@ -1,0 +1,23 @@
+{
+  "name": "supplysense-mysql-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+    "tasks.max": "1",
+    "database.hostname": "host.docker.internal",
+    "database.port": "3306",
+    "database.user": "root",
+    "database.password": "root",
+    "database.server.id": "184054",
+    "topic.prefix": "supplysense_cdc",
+    "database.include.list": "supplysense",
+    "table.include.list": "supplysense.olist_orders,supplysense.olist_products,supplysense.olist_sellers,supplysense.olist_order_items",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+    "schema.history.internal.kafka.topic": "schema-changes.supplysense",
+    "snapshot.mode": "schema_only",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+    "include.schema.changes": "false"
+  }
+}

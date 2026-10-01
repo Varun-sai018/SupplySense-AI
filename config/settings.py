@@ -45,3 +45,8 @@ SQUARE_ACCESS_TOKEN = _get_env("SQUARE_ACCESS_TOKEN", required=False)
 SQUARE_LOCATION_ID = _get_env("SQUARE_LOCATION_ID", required=False)
 SQUARE_WEBHOOK_SIGNATURE_KEY = _get_env("SQUARE_WEBHOOK_SIGNATURE_KEY", required=False) or _get_env("SQUARE_SIGNATURE_KEY", required=False)
 
+# ==============================================================================
+# Debezium CDC Configuration
+# ==============================================================================
+DEBEZIUM_CONNECT_URL = _get_env("DEBEZIUM_CONNECT_URL", required=False) or "http://localhost:8083"
+

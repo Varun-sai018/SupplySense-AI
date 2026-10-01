@@ -7,7 +7,7 @@
     "baseline_definition": "predicted_demand(C, T) = observed_demand(C, T - 1 week)",
     "evaluation_method": "one-step-ahead rolling naive forecast",
     "missing_handling": "zero demand for unobserved preceding calendar weeks",
-    "created_at": "2026-09-28T12:09:41.667507"
+    "created_at": "2026-10-01T10:00:44.036761"
   },
   "results": [
     {
