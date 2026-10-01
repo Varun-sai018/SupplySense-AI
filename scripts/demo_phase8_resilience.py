@@ -146,9 +146,69 @@ def run_phase8_demo():
     print(f"  Additional Events Created      : {after_replay_count - after_batch_count} (Expected: 0)")
     print(f"  Additional Kafka Publishes     : {mock_producer.send.call_count} (Expected: 0)")
 
-    cur.execute("SELECT current_version FROM dataset_metadata WHERE dataset_name = 'Orders'")
-    final_version = cur.fetchone()["current_version"]
-    print(f"  Final Orders Version           : v{final_version} (Unchanged on replay)")
+    # 5. Stale Pipeline Execution Reconciliation / Reaper
+    print("\n" + "=" * 80)
+    print("STEP 5: PIPELINE EXECUTION RECONCILIATION / REAPER (TASK 8.5)")
+    print("=" * 80)
+    reaper_mod = importlib.import_module('services.pipeline-runner.reaper')
+    reap_stale_executions = reaper_mod.reap_stale_executions
+
+    import datetime
+    now = datetime.datetime.now()
+    stale_time = now - datetime.timedelta(minutes=45)  # 45 minutes old (> 30 min timeout)
+    fresh_time = now - datetime.timedelta(seconds=20)  # 20 seconds old (< 30 min timeout)
+
+    # Insert test decision
+    cur.execute("""
+        INSERT INTO pipeline_decisions (
+            pipeline_name, condition_type, decision, ready_count, total_required, reason
+        ) VALUES (
+            'Demand Forecast Pipeline', 'ALL', 'TRIGGER', 3, 3, 'Phase 8 Demo decision'
+        )
+    """)
+    demo_decision_id = cur.lastrowid
+
+    # Insert orphaned stale execution (simulating container crash)
+    cur.execute("""
+        INSERT INTO pipeline_executions (
+            pipeline_name, decision_id, triggering_event_id, status, started_at, created_at
+        ) VALUES (
+            'Demand Forecast Pipeline', %s, 999901, 'RUNNING', %s, %s
+        )
+    """, (demo_decision_id, stale_time, stale_time))
+    stale_demo_id = cur.lastrowid
+
+    # Insert healthy active execution
+    cur.execute("""
+        INSERT INTO pipeline_executions (
+            pipeline_name, decision_id, triggering_event_id, status, started_at, created_at
+        ) VALUES (
+            'Demand Forecast Pipeline', %s, 999902, 'RUNNING', %s, %s
+        )
+    """, (demo_decision_id, fresh_time, fresh_time))
+    fresh_demo_id = cur.lastrowid
+    conn.commit()
+
+    print(f"  Created Stale Execution   : #{stale_demo_id} (RUNNING, started 45m ago)")
+    print(f"  Created Active Execution  : #{fresh_demo_id} (RUNNING, started 20s ago)")
+    print("  Executing reaper sweep with 1800s timeout...")
+
+    reaper_stats = reap_stale_executions(timeout_seconds=1800, connection=conn)
+    print(f"  Reaper Sweep Summary      : {reaper_stats}")
+
+    # Inspect statuses
+    cur.execute("SELECT status, completed_at, error_message FROM pipeline_executions WHERE execution_id = %s", (stale_demo_id,))
+    stale_res = cur.fetchone()
+    cur.execute("SELECT status, completed_at FROM pipeline_executions WHERE execution_id = %s", (fresh_demo_id,))
+    fresh_res = cur.fetchone()
+
+    print(f"  Stale Execution #{stale_demo_id} Status : {stale_res['status']} (Error: {stale_res['error_message'][:60]}...)")
+    print(f"  Active Execution #{fresh_demo_id} Status: {fresh_res['status']} (Completed: {fresh_res['completed_at']})")
+
+    # Clean up demo executions and decisions
+    cur.execute("DELETE FROM pipeline_executions WHERE execution_id IN (%s, %s)", (stale_demo_id, fresh_demo_id))
+    cur.execute("DELETE FROM pipeline_decisions WHERE decision_id = %s", (demo_decision_id,))
+    conn.commit()
 
     conn.close()
     print("\n" + "=" * 80)

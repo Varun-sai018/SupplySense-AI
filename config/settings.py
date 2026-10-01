@@ -55,3 +55,10 @@ DEBEZIUM_CONNECT_URL = _get_env("DEBEZIUM_CONNECT_URL", required=False) or "http
 # ==============================================================================
 CDC_BATCH_MAX_EVENTS = int(_get_env("CDC_BATCH_MAX_EVENTS", required=False) or 100)
 CDC_BATCH_MAX_WAIT_MS = int(_get_env("CDC_BATCH_MAX_WAIT_MS", required=False) or 1000)
+
+# ==============================================================================
+# Pipeline Execution Reconciliation / Reaper Configuration
+# ==============================================================================
+PIPELINE_EXECUTION_STALE_TIMEOUT_SECONDS = int(
+    _get_env("PIPELINE_EXECUTION_STALE_TIMEOUT_SECONDS", required=False) or 1800
+)

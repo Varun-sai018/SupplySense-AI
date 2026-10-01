@@ -74,10 +74,30 @@ The micro-batching parameters are configured via environment variables or `confi
 | :--- | :--- | :--- | :--- |
 | Max Events | `CDC_BATCH_MAX_EVENTS` | `100` | Maximum buffered CDC events per dataset before flushing a consolidated batch. |
 | Max Wait Time | `CDC_BATCH_MAX_WAIT_MS` | `1000` | Maximum time in milliseconds before partially filled batches are flushed. |
+| Stale Execution Timeout | `PIPELINE_EXECUTION_STALE_TIMEOUT_SECONDS` | `1800` | Timeout threshold in seconds before an orphaned `RUNNING` pipeline execution is marked `FAILED`. |
 
 ---
 
-## 5. End-to-End Example Flow
+## 5. Pipeline Execution Reconciliation / Reaper (Task 8.5)
+
+To prevent orphaned pipeline executions from remaining permanently in `RUNNING` status due to container, process, or worker node crashes, SupplySense AI implements an execution reaper service:
+
+- **Detection**: Queries all `pipeline_executions` with `status = 'RUNNING'` where elapsed time since `started_at` exceeds `PIPELINE_EXECUTION_STALE_TIMEOUT_SECONDS` (default: 30 minutes).
+- **Conditional Atomic Transition**:
+  ```sql
+  UPDATE pipeline_executions
+  SET status = 'FAILED',
+      completed_at = CURRENT_TIMESTAMP,
+      error_message = %s
+  WHERE execution_id = %s
+    AND status = 'RUNNING';
+  ```
+- **Race Condition Safety**: If a pipeline finishes (`status = 'COMPLETED'`) right as the reaper executes, `cursor.rowcount` is `0`, ensuring the reaper never overwrites a completed execution.
+- **Standalone CLI**: Accessible via `python scripts/reap_stale_executions.py [--timeout SECONDS] [--verbose]`.
+
+---
+
+## 6. End-to-End Example Flow
 
 ```
 1. 500 order rows updated in MySQL
@@ -92,12 +112,14 @@ The micro-batching parameters are configured via environment variables or `confi
 7. Exactly 1 message published to Kafka topic 'dataset-events'
 8. Dependency Engine evaluates dependency condition exactly ONCE
 9. Pipeline Runner triggers downstream XGBoost Demand Forecast execution once
+10. If an execution process crashes mid-run, Reaper marks orphaned execution FAILED after timeout
 ```
 
 ---
 
-## 6. Failure & Concurrency Handling
+## 7. Failure & Concurrency Handling
 
 - **Database Rollback on Failure**: If batch persistence fails, the transaction rolls back cleanly, and Kafka offsets are not advanced past unpersisted batches.
 - **Deduplication Resilience**: If an ungraceful shutdown occurs mid-batch and Kafka replays messages upon restart, the `source_change_id` check filters out already-committed items.
 - **Thread Safety**: The batcher is synchronous with Kafka consumer polling loops, avoiding multi-threaded lock contention and double-flush race conditions.
+- **Crash Recovery**: Orphaned executions in `RUNNING` status are safely reconciled to `FAILED` without affecting live running or completed pipelines.
