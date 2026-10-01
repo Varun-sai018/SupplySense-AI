@@ -41,6 +41,47 @@ OP_DELETE = "d"
 OP_READ = "r"
 
 
+def generate_source_change_id(
+    source: Optional[Dict[str, Any]],
+    table_name: str = "",
+    ts_ms: Optional[int] = None
+) -> Optional[str]:
+    """
+    Generates a deterministic unique identifier for a Debezium CDC source change event.
+
+    Precedence:
+      1. GTID (if available): gtid:{gtid}:{row}
+      2. Binlog File & Pos: {file}:{pos}:{row}
+      3. Fallback Coordinate: {table}:{ts_ms}:{server_id}
+      4. None if non-CDC / missing metadata.
+    """
+    if not source or not isinstance(source, dict):
+        return None
+
+    row = source.get("row")
+    row_val = 0 if row is None else row
+
+    # 1. GTID (if present)
+    gtid = source.get("gtid")
+    if gtid:
+        return f"gtid:{gtid}:{row_val}"
+
+    # 2. Binlog file and position
+    file = source.get("file")
+    pos = source.get("pos")
+    if file is not None and pos is not None:
+        return f"{file}:{pos}:{row_val}"
+
+    # 3. Fallback coordinate
+    ts = ts_ms or source.get("ts_ms")
+    tbl = table_name or source.get("table", "unknown")
+    srv = source.get("server_id", 0)
+    if ts:
+        return f"{tbl}:{ts}:{srv}"
+
+    return None
+
+
 def normalize_cdc_record(payload: Union[str, dict], topic: str = "") -> Optional[Dict[str, Any]]:
     """
     Normalizes a Debezium CDC change record into a structured dictionary.
@@ -50,7 +91,8 @@ def normalize_cdc_record(payload: Union[str, dict], topic: str = "") -> Optional
         topic: The Kafka topic from which the event was received.
 
     Returns:
-        Dict with table_name, dataset_name, op, row_data, ts_ms, or None if invalid/ignored.
+        Dict with table_name, dataset_name, op, row_data, ts_ms, source coordinates,
+        and source_change_id, or None if invalid/ignored.
     """
     if isinstance(payload, str):
         try:
@@ -87,6 +129,10 @@ def normalize_cdc_record(payload: Union[str, dict], topic: str = "") -> Optional
     before = record.get("before")
     ts_ms = record.get("ts_ms") or source.get("ts_ms")
 
+    source_file = source.get("file")
+    source_pos = source.get("pos")
+    source_change_id = generate_source_change_id(source, table_name=table_name, ts_ms=ts_ms)
+
     return {
         "table_name": table_name,
         "dataset_name": dataset_name,
@@ -94,7 +140,10 @@ def normalize_cdc_record(payload: Union[str, dict], topic: str = "") -> Optional
         "after": after,
         "before": before,
         "ts_ms": ts_ms,
-        "source": source
+        "source": source,
+        "source_file": source_file,
+        "source_pos": source_pos,
+        "source_change_id": source_change_id
     }
 
 
@@ -107,17 +156,24 @@ def process_cdc_event(
     Persists a normalized CDC event into MySQL `dataset_events`, updates `dataset_metadata`,
     and publishes the standardized event to the `dataset-events` Kafka topic.
 
+    Provides idempotent handling: if a CDC message with the same `source_change_id`
+    has already been processed, it is skipped without creating a duplicate event,
+    advancing dataset version, or publishing redundant Kafka events.
+
     Args:
         normalized_cdc: Structured dict from normalize_cdc_record.
         connection: Optional open PyMySQL database connection.
         kafka_producer: Optional KafkaProducer instance.
 
     Returns:
-        Dict with processing outcome, event_id, and dataset status.
+        Dict with processing outcome, event_id, dataset status, and is_duplicate flag.
     """
     dataset_name = normalized_cdc["dataset_name"]
     table_name = normalized_cdc["table_name"]
     op = normalized_cdc.get("op", OP_CREATE)
+    source_file = normalized_cdc.get("source_file")
+    source_pos = normalized_cdc.get("source_pos")
+    source_change_id = normalized_cdc.get("source_change_id")
 
     should_close_conn = False
     if connection is None:
@@ -137,7 +193,28 @@ def process_cdc_event(
 
     cursor = connection.cursor()
     try:
-        # 1. Fetch or initialize dataset_metadata
+        # Step 0: Deduplication check if source_change_id is present
+        if source_change_id:
+            cursor.execute("""
+                SELECT event_id, dataset_id, dataset_name, dataset_version, event_status
+                FROM dataset_events
+                WHERE source_change_id = %s
+            """, (source_change_id,))
+            existing_event = cursor.fetchone()
+            if existing_event:
+                logger.info(
+                    f"CDC event duplicate ignored: dataset={dataset_name} source_change_id={source_change_id}"
+                )
+                return {
+                    "status": "DUPLICATE_SKIPPED",
+                    "event_id": existing_event["event_id"],
+                    "dataset_name": dataset_name,
+                    "dataset_version": existing_event["dataset_version"],
+                    "published_to_kafka": False,
+                    "is_duplicate": True
+                }
+
+        # Step 1: Fetch or initialize dataset_metadata
         cursor.execute("""
             SELECT dataset_id, current_version, row_count, status
             FROM dataset_metadata
@@ -156,6 +233,7 @@ def process_cdc_event(
                 SELECT dataset_id, current_version, row_count, status
                 FROM dataset_metadata
                 WHERE dataset_name = %s
+                FOR UPDATE
             """, (dataset_name,))
             dataset = cursor.fetchone()
 
@@ -175,7 +253,48 @@ def process_cdc_event(
         new_row_count = max(0, current_rows + row_delta)
         event_time = datetime.now()
 
-        # 2. Update dataset_metadata to READY
+        # Step 2: Record event in dataset_events with race-condition protection
+        try:
+            cursor.execute("""
+                INSERT INTO dataset_events (
+                    dataset_id, dataset_name, event_type, event_time,
+                    dataset_version, rows_changed, source_file, source_pos,
+                    source_change_id, batch_id, event_status
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, 'NEW')
+            """, (
+                dataset_id,
+                dataset_name,
+                "DATASET_UPDATED",
+                event_time,
+                new_version,
+                abs(row_delta) if row_delta != 0 else 1,
+                source_file,
+                source_pos,
+                source_change_id
+            ))
+            event_id = cursor.lastrowid
+        except pymysql.err.IntegrityError:
+            # Race-condition duplicate insert caught by unique constraint
+            connection.rollback()
+            logger.info(
+                f"CDC event duplicate ignored: dataset={dataset_name} source_change_id={source_change_id}"
+            )
+            cursor.execute("""
+                SELECT event_id, dataset_id, dataset_name, dataset_version
+                FROM dataset_events
+                WHERE source_change_id = %s
+            """, (source_change_id,))
+            dup_rec = cursor.fetchone()
+            return {
+                "status": "DUPLICATE_SKIPPED",
+                "event_id": dup_rec["event_id"] if dup_rec else None,
+                "dataset_name": dataset_name,
+                "dataset_version": dup_rec["dataset_version"] if dup_rec else current_version,
+                "published_to_kafka": False,
+                "is_duplicate": True
+            }
+
+        # Step 3: Update dataset_metadata to READY and advance version
         cursor.execute("""
             UPDATE dataset_metadata
             SET current_version = %s,
@@ -185,24 +304,13 @@ def process_cdc_event(
             WHERE dataset_id = %s
         """, (new_version, new_row_count, event_time, dataset_id))
 
-        # 3. Record event in dataset_events
-        cursor.execute("""
-            INSERT INTO dataset_events (
-                dataset_id, dataset_name, event_type, event_time,
-                dataset_version, rows_changed, event_status
-            ) VALUES (%s, %s, %s, %s, %s, %s, 'NEW')
-        """, (
-            dataset_id,
-            dataset_name,
-            "DATASET_UPDATED",
-            event_time,
-            new_version,
-            abs(row_delta) if row_delta != 0 else 1
-        ))
-        event_id = cursor.lastrowid
         connection.commit()
 
-        # 4. Publish standardized message to Kafka `dataset-events`
+        logger.info(
+            f"CDC event accepted: dataset={dataset_name} source_change_id={source_change_id}"
+        )
+
+        # Step 4: Publish standardized message to Kafka `dataset-events`
         published = False
         if kafka_producer:
             kafka_msg = {
@@ -214,7 +322,8 @@ def process_cdc_event(
                 "dataset_version": new_version,
                 "rows_changed": abs(row_delta) if row_delta != 0 else 1,
                 "source": "DEBEZIUM_CDC",
-                "op": op
+                "op": op,
+                "source_change_id": source_change_id
             }
 
             future = kafka_producer.send(settings.KAFKA_TOPIC_EVENTS, value=kafka_msg)
@@ -239,7 +348,8 @@ def process_cdc_event(
             "event_id": event_id,
             "dataset_name": dataset_name,
             "dataset_version": new_version,
-            "published_to_kafka": published
+            "published_to_kafka": published,
+            "is_duplicate": False
         }
 
     except Exception as exc:

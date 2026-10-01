@@ -250,6 +250,122 @@ class TestCDCAdapter(unittest.TestCase):
                     wait_for_pipeline_execution(triggering_event_id=123, conn=self.mock_conn, timeout=10, poll_interval=1)
                 self.assertIn("Timed out after 10s", str(ctx.exception))
 
+    # --- Phase 8 Task 8.3 Deduplication & Idempotency Tests ---
+
+    def test_generate_source_change_id_gtid(self):
+        """14. generate_source_change_id prioritizes GTID when available."""
+        generate_source_change_id = cdc_adapter_mod.generate_source_change_id
+        source = {"gtid": "3a0b1c2d-0001:105", "file": "mysql-bin.000001", "pos": 100, "row": 2}
+        change_id = generate_source_change_id(source)
+        self.assertEqual(change_id, "gtid:3a0b1c2d-0001:105:2")
+
+    def test_generate_source_change_id_file_pos_row(self):
+        """15. generate_source_change_id constructs standard file:pos:row format."""
+        generate_source_change_id = cdc_adapter_mod.generate_source_change_id
+        source = {"file": "mysql-bin.000005", "pos": 54321, "row": 0}
+        change_id = generate_source_change_id(source)
+        self.assertEqual(change_id, "mysql-bin.000005:54321:0")
+
+    def test_generate_source_change_id_deterministic_replay(self):
+        """16. Exactly the same Debezium event generates the exact same source_change_id."""
+        generate_source_change_id = cdc_adapter_mod.generate_source_change_id
+        payload = {
+            "source": {"file": "mysql-bin.000002", "pos": 9999, "row": 1, "table": "olist_orders"}
+        }
+        id1 = generate_source_change_id(payload["source"])
+        id2 = generate_source_change_id(payload["source"])
+        self.assertEqual(id1, id2)
+
+    def test_generate_source_change_id_different_coords(self):
+        """17. Different source coordinates produce distinct identifiers."""
+        generate_source_change_id = cdc_adapter_mod.generate_source_change_id
+        s1 = {"file": "mysql-bin.000001", "pos": 100, "row": 0}
+        s2 = {"file": "mysql-bin.000001", "pos": 101, "row": 0}
+        s3 = {"file": "mysql-bin.000002", "pos": 100, "row": 0}
+        self.assertNotEqual(generate_source_change_id(s1), generate_source_change_id(s2))
+        self.assertNotEqual(generate_source_change_id(s1), generate_source_change_id(s3))
+
+    def test_generate_source_change_id_fallback(self):
+        """18. Fallback to table:ts_ms:server_id when binlog coordinates are absent."""
+        generate_source_change_id = cdc_adapter_mod.generate_source_change_id
+        source = {"table": "olist_orders", "ts_ms": 1727589000000, "server_id": 1}
+        change_id = generate_source_change_id(source, table_name="olist_orders")
+        self.assertEqual(change_id, "olist_orders:1727589000000:1")
+
+    def test_process_cdc_event_duplicate_skipped(self):
+        """19. process_cdc_event detects duplicate source_change_id and skips without Kafka publish."""
+        mock_producer = MagicMock()
+        # Mock finding existing event on deduplication query
+        self.mock_cursor.fetchone.return_value = {
+            "event_id": 777,
+            "dataset_id": 1,
+            "dataset_name": "Orders",
+            "dataset_version": 5,
+            "event_status": "PUBLISHED"
+        }
+
+        normalized = {
+            "table_name": "olist_orders",
+            "dataset_name": "Orders",
+            "op": "c",
+            "source_file": "mysql-bin.000001",
+            "source_pos": 100,
+            "source_change_id": "mysql-bin.000001:100:0"
+        }
+
+        result = process_cdc_event(
+            normalized_cdc=normalized,
+            connection=self.mock_conn,
+            kafka_producer=mock_producer
+        )
+
+        self.assertEqual(result["status"], "DUPLICATE_SKIPPED")
+        self.assertTrue(result["is_duplicate"])
+        self.assertEqual(result["event_id"], 777)
+        self.assertFalse(result["published_to_kafka"])
+        mock_producer.send.assert_not_called()
+
+    def test_process_cdc_event_race_condition_integrity_error_handled(self):
+        """20. process_cdc_event handles database race condition duplicate via IntegrityError safely."""
+        mock_producer = MagicMock()
+        # Step 0 check returns None (no existing record found yet)
+        # Step 1 dataset metadata returns valid dataset
+        # Step 2 insert raises pymysql.err.IntegrityError (concurrent insert)
+        # Step 3 post-rollback select returns the race winner record
+        import pymysql
+        self.mock_cursor.fetchone.side_effect = [
+            None, # Deduplication check
+            {"dataset_id": 1, "current_version": 10, "row_count": 500, "status": "READY"}, # metadata
+            {"event_id": 999, "dataset_id": 1, "dataset_name": "Orders", "dataset_version": 11} # dup fetch
+        ]
+        self.mock_cursor.execute.side_effect = [
+            None, # Dedup select
+            None, # Metadata select
+            pymysql.err.IntegrityError(1062, "Duplicate entry 'mysql-bin.000001:100:0' for key 'idx_unique_source_change'"),
+            None  # Fetch dup
+        ]
+
+        normalized = {
+            "table_name": "olist_orders",
+            "dataset_name": "Orders",
+            "op": "c",
+            "source_file": "mysql-bin.000001",
+            "source_pos": 100,
+            "source_change_id": "mysql-bin.000001:100:0"
+        }
+
+        result = process_cdc_event(
+            normalized_cdc=normalized,
+            connection=self.mock_conn,
+            kafka_producer=mock_producer
+        )
+
+        self.assertEqual(result["status"], "DUPLICATE_SKIPPED")
+        self.assertTrue(result["is_duplicate"])
+        self.assertEqual(result["event_id"], 999)
+        self.assertFalse(result["published_to_kafka"])
+        self.mock_conn.rollback.assert_called()
+
 
 if __name__ == '__main__':
     unittest.main()

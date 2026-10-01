@@ -39,11 +39,11 @@ class TestPhase7CDCFlow(unittest.TestCase):
         self.conn = get_connection()
         self.cursor = self.conn.cursor()
 
-        # Clean test records in range 9600-9699
+        # Clean test records in range 9600-9699 and test CDC records
         self.cursor.execute("DELETE FROM forecast_results WHERE execution_id BETWEEN 9600 AND 9699")
         self.cursor.execute("DELETE FROM pipeline_executions WHERE triggering_event_id BETWEEN 9600 AND 9699 OR execution_id BETWEEN 9600 AND 9699")
         self.cursor.execute("DELETE FROM pipeline_decisions WHERE decision_id BETWEEN 9600 AND 9699")
-        self.cursor.execute("DELETE FROM dataset_events WHERE event_id BETWEEN 9600 AND 9699")
+        self.cursor.execute("DELETE FROM dataset_events WHERE event_id BETWEEN 9600 AND 9699 OR source_change_id LIKE 'test_binlog_%' OR source_change_id LIKE 'mysql-bin.000008:%'")
         
         # Reset dependency datasets to WAITING
         self.cursor.execute("UPDATE dataset_metadata SET status = 'WAITING' WHERE dataset_name IN ('Orders', 'Products', 'Sellers')")
@@ -55,7 +55,7 @@ class TestPhase7CDCFlow(unittest.TestCase):
             self.cursor.execute("DELETE FROM forecast_results WHERE execution_id BETWEEN 9600 AND 9699")
             self.cursor.execute("DELETE FROM pipeline_executions WHERE triggering_event_id BETWEEN 9600 AND 9699 OR execution_id BETWEEN 9600 AND 9699")
             self.cursor.execute("DELETE FROM pipeline_decisions WHERE decision_id BETWEEN 9600 AND 9699")
-            self.cursor.execute("DELETE FROM dataset_events WHERE event_id BETWEEN 9600 AND 9699")
+            self.cursor.execute("DELETE FROM dataset_events WHERE event_id BETWEEN 9600 AND 9699 OR source_change_id LIKE 'test_binlog_%' OR source_change_id LIKE 'mysql-bin.000008:%'")
             self.cursor.execute("UPDATE dataset_metadata SET status = 'WAITING' WHERE dataset_name IN ('Orders', 'Products', 'Sellers')")
             self.conn.commit()
             self.conn.close()
@@ -175,6 +175,63 @@ class TestPhase7CDCFlow(unittest.TestCase):
         """, (exec_record["execution_id"],))
         forecast_count = self.cursor.fetchone()["count"]
         self.assertGreater(forecast_count, 0)
+
+    def test_cdc_event_replay_deduplication(self):
+        """4. Replaying the exact same CDC event is deduplicated without advancing version or creating rows."""
+        sample_cdc = {
+            "before": None,
+            "after": {"order_id": "replay_test_ord_100", "order_status": "created"},
+            "source": {
+                "file": "mysql-bin.000008",
+                "pos": 88888,
+                "row": 0,
+                "table": "olist_orders",
+                "db": "supplysense"
+            },
+            "op": "c",
+            "ts_ms": int(time.time() * 1000)
+        }
+
+        normalized = normalize_cdc_record(sample_cdc)
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized["source_change_id"], "mysql-bin.000008:88888:0")
+
+        # Get initial event count and version
+        self.cursor.execute("SELECT COUNT(*) AS total FROM dataset_events")
+        initial_event_count = self.cursor.fetchone()["total"]
+
+        # First delivery
+        res_1 = process_cdc_event(normalized, connection=self.conn)
+        self.assertEqual(res_1["status"], "PROCESSED")
+        self.assertFalse(res_1.get("is_duplicate", False))
+        first_event_id = res_1["event_id"]
+        first_version = res_1["dataset_version"]
+
+        self.cursor.execute("SELECT COUNT(*) AS total FROM dataset_events")
+        after_first_count = self.cursor.fetchone()["total"]
+        self.assertEqual(after_first_count, initial_event_count + 1)
+
+        # Check metadata version
+        self.cursor.execute("SELECT current_version FROM dataset_metadata WHERE dataset_name = 'Orders'")
+        version_after_1 = self.cursor.fetchone()["current_version"]
+        self.assertEqual(version_after_1, first_version)
+
+        # Second delivery (Exact replay of same CDC message)
+        res_2 = process_cdc_event(normalized, connection=self.conn)
+        self.assertEqual(res_2["status"], "DUPLICATE_SKIPPED")
+        self.assertTrue(res_2["is_duplicate"])
+        self.assertEqual(res_2["event_id"], first_event_id)
+        self.assertFalse(res_2["published_to_kafka"])
+
+        # Verify dataset_events count is UNCHANGED (+0)
+        self.cursor.execute("SELECT COUNT(*) AS total FROM dataset_events")
+        after_replay_count = self.cursor.fetchone()["total"]
+        self.assertEqual(after_replay_count, after_first_count)
+
+        # Verify dataset_version in metadata is UNCHANGED
+        self.cursor.execute("SELECT current_version FROM dataset_metadata WHERE dataset_name = 'Orders'")
+        version_after_replay = self.cursor.fetchone()["current_version"]
+        self.assertEqual(version_after_replay, version_after_1)
 
 
 if __name__ == '__main__':

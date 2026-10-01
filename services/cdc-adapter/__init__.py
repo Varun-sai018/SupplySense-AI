@@ -2,6 +2,7 @@ from .adapter import (
     normalize_cdc_record,
     process_cdc_event,
     run_cdc_adapter,
+    generate_source_change_id,
     TABLE_TO_DATASET_MAP,
 )
 from .register_connector import (
@@ -15,6 +16,7 @@ __all__ = [
     "normalize_cdc_record",
     "process_cdc_event",
     "run_cdc_adapter",
+    "generate_source_change_id",
     "TABLE_TO_DATASET_MAP",
     "register_or_update_connector",
     "get_connector_status",
