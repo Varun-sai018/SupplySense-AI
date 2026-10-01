@@ -50,3 +50,8 @@ SQUARE_WEBHOOK_SIGNATURE_KEY = _get_env("SQUARE_WEBHOOK_SIGNATURE_KEY", required
 # ==============================================================================
 DEBEZIUM_CONNECT_URL = _get_env("DEBEZIUM_CONNECT_URL", required=False) or "http://localhost:8083"
 
+# ==============================================================================
+# CDC Micro-Batching Configuration
+# ==============================================================================
+CDC_BATCH_MAX_EVENTS = int(_get_env("CDC_BATCH_MAX_EVENTS", required=False) or 100)
+CDC_BATCH_MAX_WAIT_MS = int(_get_env("CDC_BATCH_MAX_WAIT_MS", required=False) or 1000)

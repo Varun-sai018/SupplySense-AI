@@ -175,6 +175,8 @@ def process_cdc_event(
     source_pos = normalized_cdc.get("source_pos")
     source_change_id = normalized_cdc.get("source_change_id")
 
+    batch_id = normalized_cdc.get("batch_id")
+
     should_close_conn = False
     if connection is None:
         connection = get_connection()
@@ -241,13 +243,17 @@ def process_cdc_event(
         current_version = dataset["current_version"] or 0
         current_rows = dataset["row_count"] or 0
 
-        # Determine row delta based on CDC operation
-        if op == OP_DELETE:
+        # Determine row delta based on CDC operation or batch aggregation
+        if "net_row_delta" in normalized_cdc:
+            row_delta = normalized_cdc["net_row_delta"]
+        elif op == OP_DELETE:
             row_delta = -1
         elif op in (OP_CREATE, OP_READ):
             row_delta = 1
         else: # Update
             row_delta = 0
+
+        rows_changed = normalized_cdc.get("rows_changed", abs(row_delta) if row_delta != 0 else 1)
 
         new_version = current_version + 1
         new_row_count = max(0, current_rows + row_delta)
@@ -260,17 +266,18 @@ def process_cdc_event(
                     dataset_id, dataset_name, event_type, event_time,
                     dataset_version, rows_changed, source_file, source_pos,
                     source_change_id, batch_id, event_status
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, 'NEW')
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'NEW')
             """, (
                 dataset_id,
                 dataset_name,
                 "DATASET_UPDATED",
                 event_time,
                 new_version,
-                abs(row_delta) if row_delta != 0 else 1,
+                rows_changed,
                 source_file,
                 source_pos,
-                source_change_id
+                source_change_id,
+                batch_id
             ))
             event_id = cursor.lastrowid
         except pymysql.err.IntegrityError:
@@ -306,9 +313,14 @@ def process_cdc_event(
 
         connection.commit()
 
-        logger.info(
-            f"CDC event accepted: dataset={dataset_name} source_change_id={source_change_id}"
-        )
+        if batch_id:
+            logger.info(
+                f"CDC Batch accepted: dataset={dataset_name} batch_id={batch_id} rows_changed={rows_changed}"
+            )
+        else:
+            logger.info(
+                f"CDC event accepted: dataset={dataset_name} source_change_id={source_change_id}"
+            )
 
         # Step 4: Publish standardized message to Kafka `dataset-events`
         published = False
@@ -320,7 +332,8 @@ def process_cdc_event(
                 "event_type": "DATASET_UPDATED",
                 "event_time": str(event_time),
                 "dataset_version": new_version,
-                "rows_changed": abs(row_delta) if row_delta != 0 else 1,
+                "rows_changed": rows_changed,
+                "batch_id": batch_id,
                 "source": "DEBEZIUM_CDC",
                 "op": op,
                 "source_change_id": source_change_id
@@ -337,7 +350,7 @@ def process_cdc_event(
                 """, (event_id,))
                 connection.commit()
                 logger.info(
-                    f"CDC Event #{event_id} ({dataset_name} v{new_version}) routed to Kafka "
+                    f"CDC Event #{event_id} ({dataset_name} v{new_version}, batch={batch_id or 'none'}, rows={rows_changed}) routed to Kafka "
                     f"topic '{settings.KAFKA_TOPIC_EVENTS}' [partition={record_meta.partition}, offset={record_meta.offset}]."
                 )
             except Exception as k_err:
@@ -348,6 +361,8 @@ def process_cdc_event(
             "event_id": event_id,
             "dataset_name": dataset_name,
             "dataset_version": new_version,
+            "batch_id": batch_id,
+            "rows_changed": rows_changed,
             "published_to_kafka": published,
             "is_duplicate": False
         }
@@ -372,12 +387,16 @@ def process_cdc_event(
 def run_cdc_adapter(
     cdc_topics=None,
     max_events: Optional[int] = None,
-    poll_timeout_ms: int = 1000
+    poll_timeout_ms: int = 1000,
+    batch_max_events: Optional[int] = None,
+    batch_max_wait_ms: Optional[int] = None
 ):
     """
-    Runs the CDC Adapter event consumer loop, reading from Debezium change topics
+    Runs the CDC Adapter event consumer loop with micro-batching, reading from Debezium change topics
     and feeding SupplySense's event-conditioned architecture.
     """
+    from .batcher import CDCBatcher
+
     if cdc_topics is None:
         cdc_topics = [
             "supplysense_cdc.supplysense.olist_orders",
@@ -405,6 +424,13 @@ def run_cdc_adapter(
     connection = get_connection()
     events_processed = 0
 
+    batcher = CDCBatcher(
+        max_events=batch_max_events,
+        max_wait_ms=batch_max_wait_ms,
+        flush_callback=lambda batch, conn: process_cdc_event(batch, connection=conn, kafka_producer=producer),
+        connection=connection
+    )
+
     try:
         while True:
             records = consumer.poll(timeout_ms=poll_timeout_ms)
@@ -414,18 +440,32 @@ def run_cdc_adapter(
                         continue
                     normalized = normalize_cdc_record(msg.value, topic=msg.topic)
                     if normalized:
-                        process_cdc_event(normalized, connection=connection, kafka_producer=producer)
-                        events_processed += 1
-                        if max_events and events_processed >= max_events:
-                            logger.info(f"Reached max_events limit ({max_events}). Stopping CDC Adapter.")
-                            return events_processed
+                        flush_res = batcher.add_event(normalized, connection=connection)
+                        if flush_res and flush_res.get("status") == "PROCESSED":
+                            events_processed += flush_res.get("rows_changed", 1)
+                            if max_events and events_processed >= max_events:
+                                logger.info(f"Reached max_events limit ({max_events}). Stopping CDC Adapter.")
+                                return events_processed
+
+            # Check timeouts for pending batches
+            timeout_flushes = batcher.check_timeouts(connection=connection)
+            for f_res in timeout_flushes:
+                if f_res and f_res.get("status") == "PROCESSED":
+                    events_processed += f_res.get("rows_changed", 1)
+                    if max_events and events_processed >= max_events:
+                        logger.info(f"Reached max_events limit ({max_events}). Stopping CDC Adapter.")
+                        return events_processed
+
     except KeyboardInterrupt:
         logger.info("CDC Adapter stopped by user.")
     finally:
+        # Flush any remaining events
+        batcher.flush_all(connection=connection)
         consumer.close()
         producer.flush()
         producer.close()
         connection.close()
+
 
 
 if __name__ == '__main__':
