@@ -61,14 +61,8 @@ class TestPipelineRunner(unittest.TestCase):
         self.assertIn("Unknown pipeline", result["error"])
         
         # Verify database update to FAILED
-        self.mock_cursor.execute.assert_any_call(
-            """
-                UPDATE pipeline_executions
-                SET status = 'FAILED', completed_at = %s, error_message = %s
-                WHERE execution_id = %s
-            """,
-            unittest.mock.ANY
-        )
+        executed_sqls = [call[0][0] for call in self.mock_cursor.execute.call_args_list]
+        self.assertTrue(any("SET status = 'FAILED'" in sql and "WHERE execution_id = %s" in sql for sql in executed_sqls))
         self.mock_conn.commit.assert_called()
 
     def test_successful_execution_marks_completed(self):
@@ -90,17 +84,8 @@ class TestPipelineRunner(unittest.TestCase):
         self.assertIn("metrics", result["result"])
 
         # Check DB update for COMPLETED
-        self.mock_cursor.execute.assert_any_call(
-            """
-            UPDATE pipeline_executions
-            SET status = 'COMPLETED',
-                completed_at = %s,
-                output_location = %s,
-                error_message = NULL
-            WHERE execution_id = %s
-        """,
-            unittest.mock.ANY
-        )
+        executed_sqls = [call[0][0] for call in self.mock_cursor.execute.call_args_list]
+        self.assertTrue(any("SET status = 'COMPLETED'" in sql and "output_location = %s" in sql for sql in executed_sqls))
         self.mock_conn.commit.assert_called()
 
     def test_failed_handler_execution_marks_failed(self):
@@ -118,14 +103,8 @@ class TestPipelineRunner(unittest.TestCase):
         self.assertIn("Forecast computation failed", result["error"])
 
         # Check DB update for FAILED
-        self.mock_cursor.execute.assert_any_call(
-            """
-                UPDATE pipeline_executions
-                SET status = 'FAILED', completed_at = %s, error_message = %s
-                WHERE execution_id = %s
-            """,
-            unittest.mock.ANY
-        )
+        executed_sqls = [call[0][0] for call in self.mock_cursor.execute.call_args_list]
+        self.assertTrue(any("SET status = 'FAILED'" in sql and "error_message = %s" in sql for sql in executed_sqls))
         self.mock_conn.commit.assert_called()
 
     @patch('os.path.isfile')

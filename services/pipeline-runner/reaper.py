@@ -18,6 +18,7 @@ if REPO_ROOT not in sys.path:
 
 from common.database import get_connection
 from config.settings import PIPELINE_EXECUTION_STALE_TIMEOUT_SECONDS
+from .retry_policy import calculate_backoff_delay
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,8 @@ def reap_stale_executions(
 ) -> Dict[str, int]:
     """
     Identifies pipeline executions stuck in 'RUNNING' status longer than the
-    configured timeout threshold and safely transitions them to 'FAILED'.
+    configured timeout threshold and safely transitions them to 'FAILED',
+    scheduling them for retry if within retry limits.
 
     Uses a conditional atomic SQL UPDATE (WHERE execution_id = %s AND status = 'RUNNING')
     to prevent race conditions with pipelines completing concurrently.
@@ -70,7 +72,7 @@ def reap_stale_executions(
 
         # Find all executions currently RUNNING
         cursor.execute("""
-            SELECT execution_id, pipeline_name, status, started_at, created_at
+            SELECT execution_id, pipeline_name, status, retry_count, max_retries, started_at, created_at
             FROM pipeline_executions
             WHERE status = 'RUNNING'
             ORDER BY execution_id ASC
@@ -81,6 +83,8 @@ def reap_stale_executions(
         for exec_row in running_executions:
             exec_id = exec_row["execution_id"]
             p_name = exec_row["pipeline_name"]
+            curr_retries = exec_row.get("retry_count") or 0
+            max_ret = exec_row.get("max_retries") or 3
             started_time = exec_row.get("started_at") or exec_row.get("created_at")
 
             # Check if this execution exceeds the stale timeout threshold
@@ -96,15 +100,22 @@ def reap_stale_executions(
                     f"stale timeout of {timeout_seconds}s (started at {started_time})."
                 )
 
+                next_retry = None
+                if curr_retries < max_ret:
+                    delay = calculate_backoff_delay(curr_retries)
+                    next_retry = now + datetime.timedelta(seconds=delay)
+
                 # Conditional atomic update: only update if still RUNNING
                 cursor.execute("""
                     UPDATE pipeline_executions
                     SET status = 'FAILED',
                         completed_at = %s,
-                        error_message = %s
+                        error_message = %s,
+                        retry_error_type = 'TRANSIENT_REAPER',
+                        next_retry_at = %s
                     WHERE execution_id = %s
                       AND status = 'RUNNING'
-                """, (now, error_msg, exec_id))
+                """, (now, error_msg, next_retry, exec_id))
 
                 if cursor.rowcount > 0:
                     stats["reconciled"] += 1

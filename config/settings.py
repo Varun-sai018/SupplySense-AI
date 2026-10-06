@@ -62,3 +62,10 @@ CDC_BATCH_MAX_WAIT_MS = int(_get_env("CDC_BATCH_MAX_WAIT_MS", required=False) or
 PIPELINE_EXECUTION_STALE_TIMEOUT_SECONDS = int(
     _get_env("PIPELINE_EXECUTION_STALE_TIMEOUT_SECONDS", required=False) or 1800
 )
+
+# ==============================================================================
+# Pipeline Execution Retry & Failure Recovery Configuration
+# ==============================================================================
+PIPELINE_MAX_RETRIES = int(_get_env("PIPELINE_MAX_RETRIES", required=False) or 3)
+PIPELINE_RETRY_BASE_DELAY_SECONDS = int(_get_env("PIPELINE_RETRY_BASE_DELAY_SECONDS", required=False) or 5)
+PIPELINE_RETRY_MAX_DELAY_SECONDS = int(_get_env("PIPELINE_RETRY_MAX_DELAY_SECONDS", required=False) or 60)

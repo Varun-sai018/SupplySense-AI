@@ -60,7 +60,7 @@ class TestExecutionReaper(unittest.TestCase):
         self.assertIn("WHERE execution_id = %s", query_sql)
         self.assertIn("AND status = 'RUNNING'", query_sql)
         self.assertIn("Execution timed out and marked FAILED by reaper", params[1])
-        self.assertEqual(params[2], 101)
+        self.assertEqual(params[-1], 101)
         self.mock_conn.commit.assert_called_once()
 
     def test_recent_running_execution_untouched(self):

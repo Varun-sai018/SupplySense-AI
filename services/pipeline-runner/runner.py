@@ -18,6 +18,7 @@ if REPO_ROOT not in sys.path:
 
 from common.database import get_connection
 from .registry import get_pipeline_handler, list_registered_pipelines
+from .retry_policy import is_retryable_error, classify_error_type, calculate_backoff_delay
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ def execute_pipeline(
          - If unknown: mark FAILED and return.
       3. Execute handler.
          - If successful: mark COMPLETED, record output_location, return success dict.
-         - If error raised: mark FAILED, record error_message, return failure dict.
+         - If error raised: mark FAILED, classify error, compute next_retry_at if retryable.
 
     Args:
         execution_id: The ID of the pipeline_executions row.
@@ -73,7 +74,11 @@ def execute_pipeline(
             
             cursor.execute("""
                 UPDATE pipeline_executions
-                SET status = 'FAILED', completed_at = %s, error_message = %s
+                SET status = 'FAILED',
+                    completed_at = %s,
+                    error_message = %s,
+                    retry_error_type = 'DETERMINISTIC_CONFIG',
+                    next_retry_at = NULL
                 WHERE execution_id = %s
             """, (datetime.datetime.now(), error_msg, execution_id))
             connection.commit()
@@ -91,20 +96,42 @@ def execute_pipeline(
             handler_result = handler(execution_id, pipeline_name)
         except Exception as exc:
             error_msg = str(exc)
-            logger.error(f"Pipeline '{pipeline_name}' execution #{execution_id} FAILED: {error_msg}")
-            
+            err_type = classify_error_type(error_msg, exception=exc)
+            retryable = is_retryable_error(error_msg, exception=exc)
+            logger.error(f"Pipeline '{pipeline_name}' execution #{execution_id} FAILED ({err_type}): {error_msg}")
+
+            cursor.execute(
+                "SELECT retry_count, max_retries FROM pipeline_executions WHERE execution_id = %s",
+                (execution_id,)
+            )
+            row = cursor.fetchone()
+            curr_retries = row["retry_count"] if row else 0
+            max_retries = (row.get("max_retries") if row else None) or 3
+
+            next_retry = None
+            if retryable and curr_retries < max_retries:
+                delay = calculate_backoff_delay(curr_retries)
+                next_retry = datetime.datetime.now() + datetime.timedelta(seconds=delay)
+                logger.info(f"Scheduled retry for execution #{execution_id} in {delay}s (at {next_retry}).")
+
             cursor.execute("""
                 UPDATE pipeline_executions
-                SET status = 'FAILED', completed_at = %s, error_message = %s
+                SET status = 'FAILED',
+                    completed_at = %s,
+                    error_message = %s,
+                    retry_error_type = %s,
+                    next_retry_at = %s
                 WHERE execution_id = %s
-            """, (datetime.datetime.now(), error_msg, execution_id))
+            """, (datetime.datetime.now(), error_msg, err_type, next_retry, execution_id))
             connection.commit()
 
             return {
                 "execution_id": execution_id,
                 "pipeline_name": pipeline_name,
                 "status": "FAILED",
-                "error": error_msg
+                "error": error_msg,
+                "retry_error_type": err_type,
+                "next_retry_at": next_retry
             }
 
         # Step 4: Record success and artifact location
@@ -114,7 +141,8 @@ def execute_pipeline(
             SET status = 'COMPLETED',
                 completed_at = %s,
                 output_location = %s,
-                error_message = NULL
+                error_message = NULL,
+                next_retry_at = NULL
             WHERE execution_id = %s
         """, (datetime.datetime.now(), output_location, execution_id))
         connection.commit()
