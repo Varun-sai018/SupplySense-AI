@@ -7,4 +7,6 @@ venv/
 .vscode/
 data/raw_csv/
 data/processed/
+ml/results/executions/*
+!ml/results/executions/.gitkeep
 *.log

@@ -51,6 +51,10 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
     """
     logger.info(f"Starting execution #{execution_id} for pipeline '{pipeline_name}'...")
 
+    # Create execution-scoped directory under ml/results/executions/<execution_id>
+    exec_dir = os.path.join(RESULTS_DIR, 'executions', str(execution_id))
+    os.makedirs(exec_dir, exist_ok=True)
+
     # 1. Validate required prepared input datasets
     required_inputs = [
         os.path.join(PROCESSED_DIR, 'train.csv'),
@@ -63,10 +67,10 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
         logger.error(error_msg)
         raise FileNotFoundError(error_msg)
 
-    # 2. Invoke the naive baseline benchmark
+    # 2. Invoke the naive baseline benchmark into the execution directory
     logger.info("Step 1/4: Running Naive Baseline Benchmark...")
     try:
-        baseline_result = run_baseline()
+        baseline_result = run_baseline(output_dir=exec_dir, execution_id=execution_id)
     except Exception as e:
         error_msg = f"Baseline execution failed with exception: {e}"
         logger.error(error_msg)
@@ -82,30 +86,40 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
         logger.error(error_msg)
         raise RuntimeError(error_msg) from e
 
-    # 4. Train and evaluate XGBoost
+    # 4. Train and evaluate XGBoost into the execution directory
     logger.info("Step 3/4: Training and evaluating XGBoost Regressor...")
     try:
-        xgb_result = train_and_evaluate_xgboost(features_df=features_df)
+        xgb_result = train_and_evaluate_xgboost(
+            features_df=features_df,
+            output_dir=exec_dir,
+            execution_id=execution_id
+        )
     except Exception as e:
         error_msg = f"XGBoost pipeline failed with exception: {e}"
         logger.error(error_msg)
         raise RuntimeError(error_msg) from e
 
-    # 5. Verify all expected output artifacts
-    output_comparison_json = os.path.join(RESULTS_DIR, 'model_comparison.json')
-    output_xgb_metrics_json = os.path.join(RESULTS_DIR, 'xgboost_metrics.json')
-    output_base_metrics_json = os.path.join(RESULTS_DIR, 'baseline_metrics.json')
-    model_json = os.path.join(MODELS_DIR, 'xgboost_demand_model.json')
-    xgb_val_preds_csv = os.path.join(PROCESSED_DIR, 'xgboost_validation_predictions.csv')
-    xgb_test_preds_csv = os.path.join(PROCESSED_DIR, 'xgboost_test_predictions.csv')
+    # 5. Verify all expected output artifacts in execution directory
+    output_comparison_json = os.path.join(exec_dir, 'model_comparison.json')
+    output_xgb_metrics_json = os.path.join(exec_dir, 'xgboost_metrics.json')
+    output_base_metrics_json = os.path.join(exec_dir, 'baseline_metrics.json')
+    output_base_metrics_csv = os.path.join(exec_dir, 'baseline_metrics.csv')
+    model_json = os.path.join(exec_dir, 'xgboost_demand_model.json')
+    xgb_val_preds_csv = os.path.join(exec_dir, 'xgboost_validation_predictions.csv')
+    xgb_test_preds_csv = os.path.join(exec_dir, 'xgboost_test_predictions.csv')
+    base_val_preds_csv = os.path.join(exec_dir, 'baseline_validation_predictions.csv')
+    base_test_preds_csv = os.path.join(exec_dir, 'baseline_test_predictions.csv')
 
     expected_outputs = [
         output_comparison_json,
         output_xgb_metrics_json,
         output_base_metrics_json,
+        output_base_metrics_csv,
         model_json,
         xgb_val_preds_csv,
         xgb_test_preds_csv,
+        base_val_preds_csv,
+        base_test_preds_csv,
     ]
     missing_outputs = [f for f in expected_outputs if not os.path.isfile(f)]
     if missing_outputs:
@@ -129,12 +143,14 @@ def demand_forecast_pipeline_handler(execution_id: int, pipeline_name: str) -> D
         logger.error(error_msg)
         raise RuntimeError(error_msg) from e
 
-    # Relative path for portable database storage (model comparison is primary)
+    # Relative path for portable database storage (execution-scoped model comparison is primary)
     rel_output_location = os.path.relpath(output_comparison_json, REPO_ROOT).replace('\\', '/')
 
     logger.info(f"Pipeline '{pipeline_name}' execution #{execution_id} completed successfully.")
     return {
         "output_location": rel_output_location,
+        "execution_id": execution_id,
+        "execution_dir": os.path.relpath(exec_dir, REPO_ROOT).replace('\\', '/'),
         "forecasts_saved": saved_count,
         "comparison": xgb_result.get("comparison"),
         "metrics": {

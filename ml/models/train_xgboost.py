@@ -67,6 +67,8 @@ TEST_END_DATE = '2018-08-27'
 
 def train_and_evaluate_xgboost(
     features_df: Optional[pd.DataFrame] = None,
+    output_dir: Optional[str] = None,
+    execution_id: Optional[int] = None,
     n_estimators: int = 500,
     learning_rate: float = 0.05,
     max_depth: int = 6,
@@ -77,6 +79,11 @@ def train_and_evaluate_xgboost(
 ) -> Dict[str, Any]:
     """
     Executes the complete XGBoost training, evaluation, comparison, and serialization pipeline.
+
+    Args:
+        features_df: Optional pre-engineered DataFrame.
+        output_dir: Optional target directory for execution-scoped artifacts.
+        execution_id: Optional execution ID for metadata traceability.
     """
     logger.info("=" * 60)
     logger.info("  SUPPLYSENSE AI - XGBOOST DEMAND FORECASTING PIPELINE")
@@ -178,20 +185,27 @@ def train_and_evaluate_xgboost(
     logger.info(f"  RMSE:  {test_metrics['rmse']:.4f}")
     logger.info(f"  R²:    {test_metrics['r2']:.4f}")
 
-    # 6. Save Predictions to CSV
-    os.makedirs(PROCESSED_DIR, exist_ok=True)
+    target_pred_dir = output_dir if output_dir else PROCESSED_DIR
+    target_results_dir = output_dir if output_dir else RESULTS_DIR
+
+    # 6. Save Predictions to CSV Atomically
+    os.makedirs(target_pred_dir, exist_ok=True)
     val_pred_df = val_df[['product_category', 'week_start_date']].copy()
     val_pred_df['actual_demand'] = y_val.values
     val_pred_df['predicted_demand'] = val_preds
-    val_pred_path = os.path.join(PROCESSED_DIR, 'xgboost_validation_predictions.csv')
-    val_pred_df.to_csv(val_pred_path, index=False)
+    val_pred_path = os.path.join(target_pred_dir, 'xgboost_validation_predictions.csv')
+    val_tmp = val_pred_path + ".tmp"
+    val_pred_df.to_csv(val_tmp, index=False)
+    os.replace(val_tmp, val_pred_path)
     logger.info(f"Saved validation predictions to {val_pred_path}")
 
     test_pred_df = test_df[['product_category', 'week_start_date']].copy()
     test_pred_df['actual_demand'] = y_test.values
     test_pred_df['predicted_demand'] = test_preds
-    test_pred_path = os.path.join(PROCESSED_DIR, 'xgboost_test_predictions.csv')
-    test_pred_df.to_csv(test_pred_path, index=False)
+    test_pred_path = os.path.join(target_pred_dir, 'xgboost_test_predictions.csv')
+    test_tmp = test_pred_path + ".tmp"
+    test_pred_df.to_csv(test_tmp, index=False)
+    os.replace(test_tmp, test_pred_path)
     logger.info(f"Saved test predictions to {test_pred_path}")
 
     # 7. Save Serialized Model
@@ -200,17 +214,25 @@ def train_and_evaluate_xgboost(
     model.save_model(model_path)
     logger.info(f"Saved trained XGBoost model to {model_path}")
 
-    # 8. Save Metrics & Benchmark Comparison
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    exec_model_path = model_path
+    if output_dir:
+        exec_model_path = os.path.join(output_dir, 'xgboost_demand_model.json')
+        model.save_model(exec_model_path)
+
+    # 8. Save Metrics & Benchmark Comparison Atomically
+    os.makedirs(target_results_dir, exist_ok=True)
 
     # Load Baseline Metrics
-    baseline_json_path = os.path.join(RESULTS_DIR, 'baseline_metrics.json')
+    baseline_json_path = os.path.join(target_results_dir, 'baseline_metrics.json')
+    if not os.path.isfile(baseline_json_path):
+        baseline_json_path = os.path.join(RESULTS_DIR, 'baseline_metrics.json')
+
     naive_val = {"MAE": 7.9802, "RMSE": 15.3196, "R2": 0.8992}
     naive_test = {"MAE": 9.4636, "RMSE": 17.9912, "R2": 0.8351}
 
     if os.path.isfile(baseline_json_path):
         try:
-            with open(baseline_json_path, 'r') as f:
+            with open(baseline_json_path, 'r', encoding='utf-8') as f:
                 base_data = json.load(f)
                 for r in base_data.get('results', []):
                     if r.get('split') == 'Validation':
@@ -221,6 +243,9 @@ def train_and_evaluate_xgboost(
             logger.warning(f"Could not load baseline JSON: {e}")
 
     comparison_report = {
+        "metadata": {
+            "created_at": datetime.datetime.now().isoformat()
+        },
         "validation": {
             "naive_baseline": naive_val,
             "xgboost": {
@@ -238,10 +263,14 @@ def train_and_evaluate_xgboost(
             }
         }
     }
+    if execution_id is not None:
+        comparison_report["metadata"]["execution_id"] = execution_id
 
-    comparison_path = os.path.join(RESULTS_DIR, 'model_comparison.json')
-    with open(comparison_path, 'w') as f:
+    comparison_path = os.path.join(target_results_dir, 'model_comparison.json')
+    comp_tmp = comparison_path + ".tmp"
+    with open(comp_tmp, 'w', encoding='utf-8') as f:
         json.dump(comparison_report, f, indent=2)
+    os.replace(comp_tmp, comparison_path)
     logger.info(f"Saved model comparison report to {comparison_path}")
 
     # Save XGBoost metrics
@@ -280,10 +309,14 @@ def train_and_evaluate_xgboost(
             }
         ]
     }
+    if execution_id is not None:
+        xgb_metrics_report["metadata"]["execution_id"] = execution_id
 
-    xgb_metrics_path = os.path.join(RESULTS_DIR, 'xgboost_metrics.json')
-    with open(xgb_metrics_path, 'w') as f:
+    xgb_metrics_path = os.path.join(target_results_dir, 'xgboost_metrics.json')
+    xgb_tmp = xgb_metrics_path + ".tmp"
+    with open(xgb_tmp, 'w', encoding='utf-8') as f:
         json.dump(xgb_metrics_report, f, indent=2)
+    os.replace(xgb_tmp, xgb_metrics_path)
     logger.info(f"Saved XGBoost metrics to {xgb_metrics_path}")
 
     return {
@@ -292,7 +325,7 @@ def train_and_evaluate_xgboost(
         "test_metrics": test_metrics,
         "comparison": comparison_report,
         "artifacts": {
-            "model_path": os.path.relpath(model_path, REPO_ROOT).replace('\\', '/'),
+            "model_path": os.path.relpath(exec_model_path, REPO_ROOT).replace('\\', '/'),
             "val_pred_path": os.path.relpath(val_pred_path, REPO_ROOT).replace('\\', '/'),
             "test_pred_path": os.path.relpath(test_pred_path, REPO_ROOT).replace('\\', '/'),
             "metrics_path": os.path.relpath(xgb_metrics_path, REPO_ROOT).replace('\\', '/'),

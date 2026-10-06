@@ -150,13 +150,15 @@ def generate_naive_predictions(
 
 
 def save_predictions_to_csv(predictions: List[Dict[str, Any]], filepath: str) -> None:
-    """Save prediction records to CSV."""
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    """Save prediction records to CSV atomically."""
+    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     fieldnames = ['product_category', 'year_week', 'week_start_date', 'actual_demand', 'predicted_demand']
-    with open(filepath, 'w', newline='', encoding='utf-8') as f:
+    tmp_path = filepath + ".tmp"
+    with open(tmp_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(predictions)
+    os.replace(tmp_path, filepath)
     logger.info(f"Saved {len(predictions)} predictions to {filepath}")
 
 
@@ -166,13 +168,14 @@ def save_metrics_to_files(
     csv_path: str,
     json_path: str
 ) -> None:
-    """Save metrics to both CSV and JSON formats."""
-    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-    os.makedirs(os.path.dirname(json_path), exist_ok=True)
+    """Save metrics to both CSV and JSON formats atomically."""
+    os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(json_path)), exist_ok=True)
 
     # Save CSV
     csv_fieldnames = ['model', 'split', 'prediction_count', 'mae', 'rmse', 'r2']
-    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+    csv_tmp = csv_path + ".tmp"
+    with open(csv_tmp, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_fieldnames)
         writer.writeheader()
         for res in results:
@@ -184,6 +187,7 @@ def save_metrics_to_files(
                 'rmse': round(res['rmse'], 4),
                 'r2': round(res['r2'], 4)
             })
+    os.replace(csv_tmp, csv_path)
     logger.info(f"Saved metrics CSV to {csv_path}")
 
     # Save JSON
@@ -191,13 +195,24 @@ def save_metrics_to_files(
         'metadata': metadata,
         'results': results
     }
-    with open(json_path, 'w', encoding='utf-8') as f:
+    json_tmp = json_path + ".tmp"
+    with open(json_tmp, 'w', encoding='utf-8') as f:
         json.dump(full_report, f, indent=2)
+    os.replace(json_tmp, json_path)
     logger.info(f"Saved metrics JSON to {json_path}")
 
 
-def run_baseline() -> Dict[str, Any]:
-    """Execute end-to-end baseline evaluation on Train, Validation, and Test."""
+def run_baseline(
+    output_dir: Optional[str] = None,
+    execution_id: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Execute end-to-end baseline evaluation on Train, Validation, and Test.
+
+    Args:
+        output_dir: Optional target directory for execution-scoped artifacts.
+        execution_id: Optional execution ID for metadata traceability.
+    """
     logger.info("=" * 60)
     logger.info("  SUPPLYSENSE AI - NAIVE BASELINE EVALUATION")
     logger.info("=" * 60)
@@ -214,6 +229,9 @@ def run_baseline() -> Dict[str, Any]:
     logger.info(f"Loaded Validation: {len(val_rows)} rows")
     logger.info(f"Loaded Test: {len(test_rows)} rows")
 
+    target_pred_dir = output_dir if output_dir else PROCESSED_DIR
+    target_results_dir = output_dir if output_dir else RESULTS_DIR
+
     # 1. Validation Predictions (History: Train rows)
     val_predictions = generate_naive_predictions(
         history_rows=train_rows,
@@ -229,7 +247,7 @@ def run_baseline() -> Dict[str, Any]:
     logger.info(f"  RMSE:  {val_metrics['rmse']:.4f}")
     logger.info(f"  R²:    {val_metrics['r2']:.4f}")
 
-    val_pred_path = os.path.join(PROCESSED_DIR, 'baseline_validation_predictions.csv')
+    val_pred_path = os.path.join(target_pred_dir, 'baseline_validation_predictions.csv')
     save_predictions_to_csv(val_predictions, val_pred_path)
 
     # 2. Test Predictions (History: Train + Validation rows)
@@ -248,7 +266,7 @@ def run_baseline() -> Dict[str, Any]:
     logger.info(f"  RMSE:  {test_metrics['rmse']:.4f}")
     logger.info(f"  R²:    {test_metrics['r2']:.4f}")
 
-    test_pred_path = os.path.join(PROCESSED_DIR, 'baseline_test_predictions.csv')
+    test_pred_path = os.path.join(target_pred_dir, 'baseline_test_predictions.csv')
     save_predictions_to_csv(test_predictions, test_pred_path)
 
     # 3. Save Summary Metrics
@@ -281,16 +299,24 @@ def run_baseline() -> Dict[str, Any]:
         'missing_handling': 'zero demand for unobserved preceding calendar weeks',
         'created_at': datetime.datetime.now().isoformat()
     }
+    if execution_id is not None:
+        metadata['execution_id'] = execution_id
 
-    metrics_csv = os.path.join(RESULTS_DIR, 'baseline_metrics.csv')
-    metrics_json = os.path.join(RESULTS_DIR, 'baseline_metrics.json')
+    metrics_csv = os.path.join(target_results_dir, 'baseline_metrics.csv')
+    metrics_json = os.path.join(target_results_dir, 'baseline_metrics.json')
     save_metrics_to_files(results, metadata, metrics_csv, metrics_json)
 
     logger.info("\nBaseline execution completed successfully.")
     return {
         'validation': val_metrics,
         'test': test_metrics,
-        'results': results
+        'results': results,
+        'artifacts': {
+            'val_pred_path': val_pred_path,
+            'test_pred_path': test_pred_path,
+            'metrics_csv': metrics_csv,
+            'metrics_json': metrics_json
+        }
     }
 
 
