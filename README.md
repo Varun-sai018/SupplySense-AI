@@ -1,143 +1,133 @@
 # SupplySense AI
 
-SupplySense AI is an intelligent, event-driven data and machine learning orchestration platform that coordinates downstream demand forecasting pipelines based on upstream dataset availability, version synchronization, and data freshness across supply chain networks.
+**SupplySense AI** is an intelligent, event-driven data orchestration and machine learning platform that coordinates downstream demand forecasting pipelines based on upstream dataset availability, version synchronization, and data freshness across supply chain networks.
+
+> **Core Philosophy**: *"Don't run downstream data pipelines simply because a cron schedule elapsed; run them when all required data dependencies are actually synchronized, validated, and ready."*
 
 ---
 
-## Architecture Overview
+## Master Architecture
 
 ```mermaid
 flowchart TD
-    subgraph DataSources["Data Sources & Ingestion"]
-        Olist["Olist Historical E-Commerce Data<br/>(CSVs in data/raw_csv)"]
-        Ingest["Data Ingestion Script<br/>(data/scripts/upload_olist.py)"]
-        Sim["Event Generator<br/>(services/event-generator)"]
+    subgraph DataSources["1. Multi-Source Ingestion Layer"]
+        Olist["Olist E-Commerce Datasets<br/>(Orders, Items, Products, Sellers)"]
+        Square["Square Sandbox Webhooks<br/>(HMAC-SHA256 Signed Realtime)"]
+        CDC["Debezium MySQL CDC<br/>(Row-level binlog streaming)"]
     end
 
-    subgraph MySQLStorage["MySQL Database (Docker: 3306)"]
-        RawTables[("Olist Raw Tables<br/>orders, items, products, sellers")]
-        Meta[("dataset_metadata<br/>Dataset versions & status")]
-        Events[("dataset_events<br/>Event log (NEW -> PUBLISHED)")]
-        Deps[("pipeline_dependencies<br/>ALL / ANY / QUORUM rules")]
-        Decisions[("pipeline_decisions<br/>TRIGGER / BLOCK audit")]
-        Execs[("pipeline_executions<br/>Idempotent execution records")]
+    subgraph ResilientCDC["2. CDC Deduplication & Micro-Batching (Phase 8)"]
+        Dedup["Source Coordinate Deduplication<br/>(source_change_id)"]
+        Batcher["CDCBatcher Buffer<br/>(Consolidation & Windowing)"]
     end
 
-    subgraph Messaging["Apache Kafka (Docker: 9092)"]
-        Producer["Kafka Producer<br/>(services/kafka-producer)"]
-        Topic{{"dataset-events Topic"}}
+    subgraph EventTransport["3. Messaging & Storage Layer"]
+        Kafka{{"Apache Kafka: dataset-events"}}
+        MySQL[("MySQL 8.0 Database<br/>(Migrations 001-011)")]
     end
 
-    subgraph Orchestration["Objective-1 Orchestrator"]
-        Engine["Dependency Engine<br/>(services/dependency-engine)"]
-        Evaluator["Condition Evaluator<br/>(ALL / ANY / QUORUM)"]
+    subgraph Orchestration["4. Event-Conditioned Dependency Engine (Phases 4-6)"]
+        Engine["Dependency Engine Evaluator"]
+        Rules{"Condition Rules<br/>ALL / ANY / QUORUM"}
+        Decisions[("pipeline_decisions<br/>TRIGGER / BLOCK Audit")]
     end
 
-    subgraph MLPipeline["Machine Learning Pipeline"]
-        Prep["Weekly Aggregator<br/>(ml/data/prepare_dataset.py)"]
-        Split["Chronological Splitter<br/>(ml/data/split_dataset.py)"]
-        Baseline["Naive Persistence Baseline<br/>(ml/baseline/naive_baseline.py)"]
-        Metrics[("Evaluation Metrics<br/>ml/results/baseline_metrics.json")]
+    subgraph ExecutionPlane["5. Pipeline Runner & ML Forecasting (Phases 1-3, 9-10)"]
+        Runner["Idempotent Pipeline Runner"]
+        Reaper["Stale Execution Reaper (Phase 8)"]
+        Retry["Automated Retry & Backoff (Phase 9)"]
+        ML["XGBoost Demand Forecaster<br/>(Leak-Free Features & Baseline)"]
+        ScopedArtifacts["Execution Scoped Artifacts<br/>(ml/results/executions/&lt;id&gt;/)"]
+        ForecastDB[("forecast_results Table")]
     end
 
-    Olist --> Ingest --> RawTables
-    Sim --> Meta
-    Sim --> Events
-    Events --> Producer --> Topic
-    Topic --> Engine
-    Engine --> Evaluator
-    Evaluator --> Deps
-    Evaluator --> Meta
-    Engine --> Decisions
-    Engine --> Execs
-    RawTables --> Prep --> Split --> Baseline --> Metrics
+    subgraph ObservabilityLayer["6. Observability & Telemetry Plane (Phase 11)"]
+        ObsAPI["FastAPI Observability Service<br/>(Port 8000: Read-Only Telemetry)"]
+    end
+
+    Olist --> MySQL
+    Square --> MySQL
+    CDC --> Dedup --> Batcher --> MySQL
+    MySQL --> Kafka
+    Kafka --> Engine
+    Engine --> Rules
+    Rules --> Decisions
+    Rules -- TRIGGER --> Runner
+    Runner --> Reaper
+    Runner --> Retry
+    Runner --> ML
+    ML --> ScopedArtifacts
+    ML --> ForecastDB
+    MySQL -.-> ObsAPI
+    ScopedArtifacts -.-> ObsAPI
 ```
 
 ---
 
-## Current Verified State (Review-2)
+## Phase Matrix & Project Evolution
 
-| Component | Status | Verification Summary |
+| Phase | Core Capability | Key Technical Innovations |
 |---|---|---|
-| **Objective-1 Orchestration** | Verified | Complete event-driven lifecycle: Event Generation → Kafka → Dependency Evaluation (`ALL`, `ANY`, `QUORUM`) → Decision Audit (`TRIGGER`/`BLOCK`) → Execution Tracking |
-| **Idempotency** | Verified | Enforces unique `(pipeline_name, triggering_event_id)` preventing duplicate downstream pipeline runs |
-| **Dataset Ingestion & ETL** | Verified | Olist e-commerce dataset schema mapping and chunked bulk ingestion into MySQL |
-| **Forecasting Formulation** | Verified | Weekly product category item aggregation (`forecasting_dataset.csv`) |
-| **Dataset Splitting** | Verified | Strict chronological split: 70% Train (2,795 rows), 15% Validation (807 rows), 15% Test (770 rows) without lookahead leakage |
-| **Baseline Benchmark** | Verified | One-step-ahead persistence model ($\hat{y}_t = y_{t-1}$): Validation $R^2 = 0.8992$, Test $R^2 = 0.8351$ |
-| **Automated Tests** | 33/33 Passing | 28 Unit tests + 5 Integration tests executing in < 0.5s |
+| **Phase 1** | Forecasting Problem Formulation | Weekly product category aggregation (`forecasting_dataset.csv`), 70/15/15 chronological split without lookahead leakage. |
+| **Phase 2** | Machine Learning Pipeline | Leak-free lag, rolling, calendar, and categorical target features; XGBoost Regressor with validation early stopping. |
+| **Phase 3** | Benchmark Evaluation | One-step-ahead rolling naive persistence baseline ($\hat{y}_t = y_{t-1}$) and automated comparison report. |
+| **Phase 4** | Dependency Engine & Runner | Event-conditioned `ALL` / `ANY` / `QUORUM` evaluations, `pipeline_decisions` audit, and idempotent pipeline execution. |
+| **Phase 5** | Real-Time Webhook Ingestion | Square sandbox webhook receiver with HMAC-SHA256 signature verification and inventory normalization. |
+| **Phase 6** | Forecast Persistence | Downstream MySQL persistence (`forecast_results`), foreign key execution mapping, and bulk upsert repository. |
+| **Phase 7** | Debezium MySQL CDC | Low-latency binlog change capture via Debezium Connect, Kafka streaming, and downstream pipeline triggering. |
+| **Phase 8** | Resilient CDC Processing | `source_change_id` deduplication, `CDCBatcher` micro-batching (200 rows → 1 event), and stale execution reaper. |
+| **Phase 9** | Automated Pipeline Retry | Exponential backoff retry policy, transient error classification (`TRANSIENT_DB`, `TRANSIENT_NETWORK`), and atomic claiming. |
+| **Phase 10** | Execution Artifact Isolation | Collision-free scoped directories (`ml/results/executions/<execution_id>/`), atomic writes, and metadata auditability. |
+| **Phase 11** | Observability & Telemetry API | Read-only FastAPI monitoring service (`services/observability`) with SQL aggregations, rate metrics, and execution detail. |
+| **Phase 12** | Master E2E Capstone Integration | Master demonstration script (`demo_e2e_capstone.py`), integration verification, and complete capstone readiness. |
 
 ---
 
-## Documentation Quick Links
+## Fast-Track Quickstart
 
-| Document | Purpose |
-|---|---|
-| **[Phase 4 Pipeline Execution Guide](file:///docs/phase-4/README.md)** | Architecture, execution lifecycle (`RUNNING` → `COMPLETED`/`FAILED`), and idempotency |
-| **[Phase 4 Demo Guide](file:///docs/phase-4/demo-guide.md)** | Step-by-step PowerShell demo commands, SQL verification queries, and expected outputs |
-| **[Developer Runbook](file:///docs/RUNBOOK.md)** | Comprehensive 18-section guide to prerequisites, environment, execution, demo flow, and troubleshooting |
-| **[Quick Start Guide](file:///docs/QUICKSTART.md)** | Minimal sequential commands for launching infrastructure, services, and running the pipeline |
-| **[Command Reference](file:///docs/COMMANDS.md)** | Full list of verified CLI, Docker, and MySQL verification commands |
-| **[System Architecture](file:///docs/architecture.md)** | High-level data flow and architecture specification |
-| **[Database Guide](file:///database/README.md)** | Schema migrations (001–008), table definitions, and volume reset instructions |
-| **[Machine Learning Guide](file:///ml/README.md)** | Forecasting problem formulation, data preparation, splitting, and baseline benchmark |
-| **[Review-2 Documentation Pack](file:///docs/review-2/README.md)** | Presentation outlines, viva Q&A, demo checklists, and metric summaries |
-
----
-
-## Fast-Track Setup
-
+### 1. Environment & Dependencies Setup
 ```bash
-# 1. Setup virtual environment & dependencies
+# Clone and enter directory
+cd capstone
+
+# Create and activate Python virtual environment
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1       # On Linux/macOS: source .venv/bin/activate
+
+# Install requirements
 pip install -r requirements.txt
 
-# 2. Configure environment
+# Configure environment variables
 Copy-Item .env.example .env       # On Linux/macOS: cp .env.example .env
+```
 
-# 3. Start MySQL and Kafka infrastructure
+### 2. Start Infrastructure
+```bash
 docker compose up -d
+```
 
-# 4. Verify the test suite
-python -m unittest discover -s tests
+### 3. Run the Master End-to-End Capstone Demo
+```bash
+python scripts/demo_e2e_capstone.py
+```
+
+### 4. Run the Full Test Suite
+```bash
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
 ---
 
-## Project Structure Overview
+## Documentation Navigation
 
-```
-capstone/
-├── common/             # PyMySQL connection utilities
-├── config/             # Settings and environment loader
-├── data/
-│   ├── processed/      # Aggregated dataset, chronological splits, and prediction outputs
-│   ├── raw_csv/        # Raw historical Olist CSVs
-│   └── scripts/        # Olist database ingestion script
-├── database/           # 6 ordered SQL migrations & database README
-├── docs/               # Runbook, Quickstart, Command reference, and Review-2 docs
-├── ml/
-│   ├── baseline/       # Persistence baseline forecasting model
-│   ├── data/           # Weekly demand aggregation and temporal splitting
-│   └── results/        # Baseline benchmark metrics (JSON & CSV)
-├── services/
-│   ├── dependency-engine/  # Kafka consumer & dependency evaluator daemon
-│   ├── event-generator/    # Interactive dataset update simulator
-│   ├── kafka-producer/     # MySQL-to-Kafka publisher
-│   ├── pipeline-runner/    # Downstream execution runner & registry
-│   └── realtime-api/       # FastAPI webhook & Square integration
-├── tests/
-│   ├── integration/    # DB connection & Objective-1 flow tests
-│   └── unit/           # Config, evaluator, split, and baseline unit tests
-├── docker-compose.yml  # MySQL 8.0 & Apache Kafka 4.3.1 definitions
-└── requirements.txt    # Python package dependencies
-```
-
----
-
-## Current Scope & Limitations
-
-- **Source Data:** Olist is a static historical e-commerce dataset (2016–2018). It is not an active real-time production stream.
-- **Event Simulation:** The Event Generator simulates dataset change events to test orchestration rules and Kafka pipeline triggers.
-- **Baseline Model:** The naive persistence model establishes the initial benchmark floor; advanced models (e.g., XGBoost, LightGBM), workflow schedulers (e.g., Airflow), and UI dashboards are planned for subsequent development phases.
+- **[Phase 12 Capstone Readiness & Integration Report](file:///docs/phase-12/README.md)**
+- **[Phase 11 Observability & Monitoring Service](file:///docs/phase-11/README.md)**
+- **[Phase 10 Execution Artifact Isolation](file:///docs/phase-10/README.md)**
+- **[Phase 9 Automated Pipeline Retry & Recovery](file:///docs/phase-9/README.md)**
+- **[Phase 8 CDC Resilience & Micro-Batching](file:///docs/phase-8/README.md)**
+- **[Phase 7 Debezium CDC Integration](file:///docs/phase-7/README.md)**
+- **[Phase 6 Forecast Persistence Guide](file:///docs/phase-6/README.md)**
+- **[Phase 5 Square Webhooks Integration](file:///docs/phase-5/README.md)**
+- **[Phase 4 Pipeline Execution Guide](file:///docs/phase-4/README.md)**
+- **[System Architecture Reference](file:///docs/architecture.md)**
+- **[Developer Runbook](file:///docs/RUNBOOK.md)**
