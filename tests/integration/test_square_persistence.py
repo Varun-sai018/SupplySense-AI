@@ -16,8 +16,10 @@ class TestSquarePersistenceIntegration(unittest.TestCase):
         self.conn = get_connection()
         self.cursor = self.conn.cursor()
         self.test_event_ids = []
+        self.test_decision_ids = []
         
         # Ensure Inventory dataset exists in dataset_metadata
+        self.cursor.execute("DELETE FROM pipeline_executions WHERE triggering_event_id BETWEEN 9980 AND 9989")
         self.cursor.execute(
             """
             INSERT INTO dataset_metadata (dataset_name, source_type, table_name, current_version, row_count, status)
@@ -37,6 +39,12 @@ class TestSquarePersistenceIntegration(unittest.TestCase):
                     tuple(self.test_event_ids)
                 )
             self.cursor.execute("DELETE FROM pipeline_executions WHERE triggering_event_id BETWEEN 9980 AND 9989")
+            if self.test_decision_ids:
+                format_strings = ','.join(['%s'] * len(self.test_decision_ids))
+                self.cursor.execute(
+                    f"DELETE FROM pipeline_decisions WHERE decision_id IN ({format_strings})",
+                    tuple(self.test_decision_ids)
+                )
             self.conn.commit()
             self.conn.close()
 
@@ -139,6 +147,7 @@ class TestSquarePersistenceIntegration(unittest.TestCase):
             (pipeline_name,)
         )
         decision_id = self.cursor.lastrowid
+        self.test_decision_ids.append(decision_id)
 
         self.cursor.execute(
             """
