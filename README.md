@@ -286,7 +286,7 @@ The following variables are used by the application. All Airflow variables are *
 | Variable | Default | Description |
 |---|---|---|
 | `PIPELINE_ORCHESTRATOR` | `LOCAL` | `LOCAL` = in-process ML handler. `AIRFLOW` = Airflow REST API dispatch. |
-| `AIRFLOW_BASE_URL` | `http://localhost:8080` | Airflow webserver REST API base URL. |
+| `AIRFLOW_BASE_URL` | `http://localhost:8080` | Airflow webserver REST API base URL. Use `http://localhost:18080` if host port 8080 is remapped due to local collisions. |
 | `AIRFLOW_API_USER` | `admin` | Airflow API username. **Development only — change for production.** |
 | `AIRFLOW_API_PASSWORD` | `admin` | Airflow API password. **Development only — change for production.** |
 | `AIRFLOW_DAG_ID` | `supplysense_demand_forecast` | Target DAG ID for REST API dispatch. |
@@ -345,8 +345,11 @@ docker compose ps
 
 Wait until `supplysense-airflow-webserver` shows `healthy` (typically 60–90 seconds after `up`).
 
+> [!NOTE]
+> If host port 8080 is already occupied by a local Windows service (e.g. Java/Tomcat), update `docker-compose.yml` to map `18080:8080` for `supplysense-airflow-webserver` and set `AIRFLOW_BASE_URL=http://localhost:18080` in `.env`.
+
 ```powershell
-# Confirm Airflow webserver is responsive
+# Confirm Airflow webserver is responsive (use port 18080 if remapped)
 Invoke-WebRequest -Uri http://localhost:8080/health -UseBasicParsing | Select-Object -ExpandProperty Content
 ```
 
@@ -406,7 +409,7 @@ docker compose down
 | Observability API | http://127.0.0.1:8000 | FastAPI, host process |
 | API Docs (Swagger) | http://127.0.0.1:8000/docs | FastAPI auto-generated |
 | React Dashboard | http://127.0.0.1:5173 | Vite dev server, host process |
-| Airflow UI | http://localhost:8080 | Docker container, admin/admin |
+| Airflow UI | http://localhost:8080 (or :18080) | Docker container, admin/admin |
 | Kafka | localhost:9092 | Docker container |
 | Debezium Connect | http://localhost:8083 | Docker container |
 | MySQL | localhost:3306 | Docker container |
@@ -630,9 +633,12 @@ This discovers and runs all unit and integration tests.
 
 > **Distinction:** Unit tests use mocks and do not require running external services (MySQL, Kafka, Airflow). Integration tests (`tests/integration/`) require a live MySQL connection configured via `.env`. Integration tests that interact with Airflow or Kafka require those services to be running.
 
-### Phase C commit test count
+### Test suite count and status
 
-At the Phase C commit (`33e1d6a`), **214 tests** passed with exit code 0, using the project virtual environment (`.venv\Scripts\python.exe`).
+Across unit and integration test suites, **220 tests** pass with exit code 0 using the project virtual environment (`.venv\Scripts\python.exe`).
+
+- Unit tests (`tests/unit/`): 170 passing tests covering dependency evaluation, CDC batching, Square signature verification, pipeline runner orchestration, reaper recovery, retry backoff, observability service, and Airflow client response hardening (HTTP 200 and 201 support).
+- Integration tests (`tests/integration/`): 50 passing tests across 14 integration test modules requiring a live MySQL database, verifying migration integrity, connection pooling, DAG race condition safety, retry persistence, CDC flows, and database repositories.
 
 ---
 
@@ -650,13 +656,16 @@ At the Phase C commit (`33e1d6a`), **214 tests** passed with exit code 0, using 
 | Phase 12 | End-to-end capstone integration | `c3d5429` |
 | Phase A | Apache Airflow infrastructure (Docker Compose stack) | `ebe9107` |
 | Phase B | Demand forecasting DAG (`supplysense_demand_forecast`) | `aba0ae5` |
-| **Phase C** | **Pipeline Runner → Airflow REST API integration with reaper/retry safety hardening** | `33e1d6a` |
+| Phase C | Pipeline Runner → Airflow REST API integration with reaper/retry safety hardening | `33e1d6a` |
+| Phase D1 | Live verification preflight: verified Docker stack, MySQL, DAG health, and host readiness | — |
+| Phase D2 | Live controlled execution: Pipeline Runner Airflow dispatch; execution #36 completed with 770 forecasts | — |
+| **Phase D3** | **Airflow dispatch response hardening: accepted HTTP 200 and 201 for DAG-run creation** | `e2096b6` |
+| Phase D4 | Live reliability & recovery verification: verified idempotency, reaper, retry, and all 220 tests | — |
+| Phase E1–E2 | Final repository audit, credential sanitization, environment synchronization, and capstone handover documentation | — |
 
-### Planned
+### Completed Milestones
 
-| Phase | Description |
-|---|---|
-| **Phase D** | Live end-to-end verification: full Dependency Engine → Airflow → MySQL flow with real dataset events against running Docker services. Not yet started. |
+All planned phases (Phases 1–12, A–E) are fully implemented, verified, and documented.
 
 ---
 

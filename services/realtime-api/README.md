@@ -23,9 +23,9 @@ Ensure that the underscore placeholders in `.env` are replaced with your real Sa
 # Square Sandbox Configuration
 SQUARE_ENVIRONMENT=sandbox
 SQUARE_BASE_URL=https://connect.squareupsandbox.com
-SQUARE_APPLICATION_ID=sandbox-sq0idb-Gu2xuSGJMMA4gFWcCR8WNw
-SQUARE_ACCESS_TOKEN=EAAAlzH-E01WnI_an4oiAjztmeZkQ4OMO0L_YROw6NhnDNRVVQFoFU046eLi7Jun
-SQUARE_LOCATION_ID=LM2QZQNXN9P7F
+SQUARE_APPLICATION_ID=your_square_application_id
+SQUARE_ACCESS_TOKEN=YOUR_SQUARE_SANDBOX_ACCESS_TOKEN
+SQUARE_LOCATION_ID=your_square_location_id
 ```
 
 > **Security Note**:
