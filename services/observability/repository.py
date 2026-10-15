@@ -101,7 +101,8 @@ def get_latest_execution(connection=None) -> Optional[Dict[str, Any]]:
         cur.execute("""
             SELECT 
                 execution_id, pipeline_name, decision_id, triggering_event_id,
-                status, retry_count, max_retries, started_at, completed_at,
+                status, orchestrator, airflow_dag_id, airflow_run_id,
+                retry_count, max_retries, started_at, completed_at,
                 next_retry_at, retry_error_type, output_location, error_message, created_at
             FROM pipeline_executions
             ORDER BY execution_id DESC
@@ -199,7 +200,8 @@ def get_executions(
     query = """
         SELECT 
             execution_id, pipeline_name, decision_id, triggering_event_id,
-            status, retry_count, max_retries, started_at, completed_at,
+            status, orchestrator, airflow_dag_id, airflow_run_id,
+            retry_count, max_retries, started_at, completed_at,
             next_retry_at, retry_error_type, output_location, error_message, created_at
         FROM pipeline_executions
         WHERE 1=1
@@ -240,7 +242,8 @@ def get_execution_by_id(execution_id: int, connection=None) -> Optional[Dict[str
         cur.execute("""
             SELECT 
                 execution_id, pipeline_name, decision_id, triggering_event_id,
-                status, retry_count, max_retries, started_at, completed_at,
+                status, orchestrator, airflow_dag_id, airflow_run_id,
+                retry_count, max_retries, started_at, completed_at,
                 next_retry_at, retry_error_type, output_location, error_message, created_at
             FROM pipeline_executions
             WHERE execution_id = %s

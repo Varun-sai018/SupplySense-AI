@@ -229,6 +229,226 @@ class TestExecutionReaper(unittest.TestCase):
 
         self.mock_conn.rollback.assert_called_once()
 
+    def test_stale_running_airflow_execution_active_in_airflow_skipped(self):
+        """10. Stale RUNNING Airflow execution whose DAG run is active (running) is NOT reaped."""
+        now = datetime.datetime.now()
+        stale_time = now - datetime.timedelta(seconds=2500)
+
+        self.mock_cursor.fetchall.return_value = [
+            {
+                "execution_id": 201,
+                "pipeline_name": "Demand Forecast Pipeline",
+                "status": "RUNNING",
+                "orchestrator": "AIRFLOW",
+                "airflow_dag_id": "supplysense_demand_forecast",
+                "airflow_run_id": "supplysense_exec_201_attempt_0",
+                "started_at": stale_time,
+                "created_at": stale_time,
+                "retry_count": 0,
+                "max_retries": 3,
+            }
+        ]
+
+        mock_airflow_client = MagicMock()
+        mock_airflow_client.get_dag_run.return_value = {
+            "dag_id": "supplysense_demand_forecast",
+            "dag_run_id": "supplysense_exec_201_attempt_0",
+            "state": "running"
+        }
+
+        stats = reap_stale_executions(
+            timeout_seconds=1800,
+            connection=self.mock_conn,
+            airflow_client=mock_airflow_client
+        )
+
+        mock_airflow_client.get_dag_run.assert_called_once_with(
+            "supplysense_demand_forecast", "supplysense_exec_201_attempt_0"
+        )
+        self.assertEqual(stats["scanned"], 1)
+        self.assertEqual(stats["stale_found"], 1)
+        self.assertEqual(stats["reconciled"], 0)
+        self.assertEqual(stats["skipped"], 1)
+
+        # Only the SELECT query should have been executed, NO update
+        self.assertEqual(self.mock_cursor.execute.call_count, 1)
+
+    def test_stale_running_airflow_execution_queued_in_airflow_skipped(self):
+        """11. Stale RUNNING Airflow execution whose DAG run is queued is NOT reaped."""
+        now = datetime.datetime.now()
+        stale_time = now - datetime.timedelta(seconds=2500)
+
+        self.mock_cursor.fetchall.return_value = [
+            {
+                "execution_id": 202,
+                "pipeline_name": "Demand Forecast Pipeline",
+                "status": "RUNNING",
+                "orchestrator": "AIRFLOW",
+                "airflow_dag_id": "supplysense_demand_forecast",
+                "airflow_run_id": "supplysense_exec_202_attempt_0",
+                "started_at": stale_time,
+                "created_at": stale_time,
+            }
+        ]
+
+        mock_airflow_client = MagicMock()
+        mock_airflow_client.get_dag_run.return_value = {"state": "queued"}
+
+        stats = reap_stale_executions(
+            timeout_seconds=1800,
+            connection=self.mock_conn,
+            airflow_client=mock_airflow_client
+        )
+
+        self.assertEqual(stats["reconciled"], 0)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(self.mock_cursor.execute.call_count, 1)
+
+    def test_stale_running_airflow_execution_succeeded_in_airflow_syncs_to_completed(self):
+        """12. Stale RUNNING Airflow execution whose DAG run succeeded is reconciled to COMPLETED."""
+        now = datetime.datetime.now()
+        stale_time = now - datetime.timedelta(seconds=2500)
+
+        self.mock_cursor.fetchall.return_value = [
+            {
+                "execution_id": 203,
+                "pipeline_name": "Demand Forecast Pipeline",
+                "status": "RUNNING",
+                "orchestrator": "AIRFLOW",
+                "airflow_dag_id": "supplysense_demand_forecast",
+                "airflow_run_id": "supplysense_exec_203_attempt_0",
+                "started_at": stale_time,
+                "created_at": stale_time,
+            }
+        ]
+        self.mock_cursor.rowcount = 1
+
+        mock_airflow_client = MagicMock()
+        mock_airflow_client.get_dag_run.return_value = {"state": "success"}
+
+        stats = reap_stale_executions(
+            timeout_seconds=1800,
+            connection=self.mock_conn,
+            airflow_client=mock_airflow_client
+        )
+
+        self.assertEqual(stats["reconciled"], 1)
+        self.assertEqual(stats["skipped"], 0)
+
+        update_sql = self.mock_cursor.execute.call_args_list[1][0][0]
+        self.assertIn("status = 'COMPLETED'", update_sql)
+
+    def test_stale_running_airflow_execution_failed_in_airflow_reaped_to_failed(self):
+        """13. Stale RUNNING Airflow execution whose DAG run failed in Airflow is transitioned to FAILED."""
+        now = datetime.datetime.now()
+        stale_time = now - datetime.timedelta(seconds=2500)
+
+        self.mock_cursor.fetchall.return_value = [
+            {
+                "execution_id": 204,
+                "pipeline_name": "Demand Forecast Pipeline",
+                "status": "RUNNING",
+                "orchestrator": "AIRFLOW",
+                "airflow_dag_id": "supplysense_demand_forecast",
+                "airflow_run_id": "supplysense_exec_204_attempt_0",
+                "started_at": stale_time,
+                "created_at": stale_time,
+                "retry_count": 0,
+                "max_retries": 3,
+            }
+        ]
+        self.mock_cursor.rowcount = 1
+
+        mock_airflow_client = MagicMock()
+        mock_airflow_client.get_dag_run.return_value = {"state": "failed"}
+
+        stats = reap_stale_executions(
+            timeout_seconds=1800,
+            connection=self.mock_conn,
+            airflow_client=mock_airflow_client
+        )
+
+        self.assertEqual(stats["reconciled"], 1)
+        self.assertEqual(stats["skipped"], 0)
+
+        update_call = self.mock_cursor.execute.call_args_list[1]
+        update_sql = update_call[0][0]
+        params = update_call[0][1]
+        self.assertIn("status = 'FAILED'", update_sql)
+        self.assertIn("failed in Airflow", params[1])
+
+    def test_stale_running_airflow_execution_missing_404_reaped_to_failed(self):
+        """14. Stale RUNNING Airflow execution missing in Airflow (HTTP 404) is reaped to FAILED."""
+        now = datetime.datetime.now()
+        stale_time = now - datetime.timedelta(seconds=2500)
+
+        self.mock_cursor.fetchall.return_value = [
+            {
+                "execution_id": 205,
+                "pipeline_name": "Demand Forecast Pipeline",
+                "status": "RUNNING",
+                "orchestrator": "AIRFLOW",
+                "airflow_dag_id": "supplysense_demand_forecast",
+                "airflow_run_id": "supplysense_exec_205_attempt_0",
+                "started_at": stale_time,
+                "created_at": stale_time,
+                "retry_count": 0,
+                "max_retries": 3,
+            }
+        ]
+        self.mock_cursor.rowcount = 1
+
+        mock_airflow_client = MagicMock()
+        mock_airflow_client.get_dag_run.return_value = None  # 404 returns None
+
+        stats = reap_stale_executions(
+            timeout_seconds=1800,
+            connection=self.mock_conn,
+            airflow_client=mock_airflow_client
+        )
+
+        self.assertEqual(stats["reconciled"], 1)
+        self.assertEqual(stats["skipped"], 0)
+
+        update_call = self.mock_cursor.execute.call_args_list[1]
+        self.assertIn("not found in Airflow (HTTP 404)", update_call[0][1][1])
+
+    def test_airflow_api_connectivity_or_timeout_error_safely_skipped(self):
+        """15. Network or timeout errors querying Airflow safely skip without marking FAILED."""
+        airflow_mod = importlib.import_module('services.pipeline-runner.airflow_client')
+        AirflowTimeoutError = airflow_mod.AirflowTimeoutError
+        now = datetime.datetime.now()
+        stale_time = now - datetime.timedelta(seconds=2500)
+
+        self.mock_cursor.fetchall.return_value = [
+            {
+                "execution_id": 206,
+                "pipeline_name": "Demand Forecast Pipeline",
+                "status": "RUNNING",
+                "orchestrator": "AIRFLOW",
+                "airflow_dag_id": "supplysense_demand_forecast",
+                "airflow_run_id": "supplysense_exec_206_attempt_0",
+                "started_at": stale_time,
+                "created_at": stale_time,
+            }
+        ]
+
+        mock_airflow_client = MagicMock()
+        mock_airflow_client.get_dag_run.side_effect = AirflowTimeoutError("Request timed out connecting to Airflow")
+
+        stats = reap_stale_executions(
+            timeout_seconds=1800,
+            connection=self.mock_conn,
+            airflow_client=mock_airflow_client
+        )
+
+        self.assertEqual(stats["scanned"], 1)
+        self.assertEqual(stats["stale_found"], 1)
+        self.assertEqual(stats["reconciled"], 0)
+        self.assertEqual(stats["skipped"], 1)
+        # Ensure no UPDATE statement was executed
+        self.assertEqual(self.mock_cursor.execute.call_count, 1)
+
 
 if __name__ == '__main__':
     unittest.main()

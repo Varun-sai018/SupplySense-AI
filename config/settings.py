@@ -69,3 +69,18 @@ PIPELINE_EXECUTION_STALE_TIMEOUT_SECONDS = int(
 PIPELINE_MAX_RETRIES = int(_get_env("PIPELINE_MAX_RETRIES", required=False) or 3)
 PIPELINE_RETRY_BASE_DELAY_SECONDS = int(_get_env("PIPELINE_RETRY_BASE_DELAY_SECONDS", required=False) or 5)
 PIPELINE_RETRY_MAX_DELAY_SECONDS = int(_get_env("PIPELINE_RETRY_MAX_DELAY_SECONDS", required=False) or 60)
+
+# ==============================================================================
+# Apache Airflow Orchestration Configuration (Phase C)
+# ==============================================================================
+# Controls execution dispatch mode: 'LOCAL' (default, in-process) or 'AIRFLOW' (REST API)
+PIPELINE_ORCHESTRATOR = _get_env("PIPELINE_ORCHESTRATOR", required=False) or "LOCAL"
+
+# Airflow REST API endpoint and credentials (admin/admin is development-only)
+AIRFLOW_BASE_URL = _get_env("AIRFLOW_BASE_URL", required=False) or "http://localhost:8080"
+AIRFLOW_API_USER = _get_env("AIRFLOW_API_USER", required=False) or "admin"
+AIRFLOW_API_PASSWORD = _get_env("AIRFLOW_API_PASSWORD", required=False) or "admin"
+AIRFLOW_DAG_ID = _get_env("AIRFLOW_DAG_ID", required=False) or "supplysense_demand_forecast"
+AIRFLOW_REQUEST_TIMEOUT_SECONDS = int(
+    _get_env("AIRFLOW_REQUEST_TIMEOUT_SECONDS", required=False) or 10
+)

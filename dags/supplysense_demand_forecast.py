@@ -144,15 +144,31 @@ def task_validate_input_datasets(**context):
             )
             pipeline_name = row_pipeline
 
-        # Ensure execution is marked RUNNING and started_at is populated
-        cursor.execute(
-            """
-            UPDATE pipeline_executions
-            SET status = 'RUNNING', started_at = COALESCE(started_at, NOW())
-            WHERE execution_id = %s
-            """,
-            (execution_id,)
-        )
+        dag_run = context.get("dag_run")
+        run_id = getattr(dag_run, "run_id", None) if dag_run else None
+
+        # Ensure execution is marked RUNNING, started_at is populated, and airflow_run_id is bound
+        if run_id:
+            cursor.execute(
+                """
+                UPDATE pipeline_executions
+                SET status = 'RUNNING',
+                    started_at = COALESCE(started_at, NOW()),
+                    airflow_run_id = COALESCE(airflow_run_id, %s)
+                WHERE execution_id = %s
+                  AND (airflow_run_id = %s OR airflow_run_id IS NULL)
+                """,
+                (run_id, execution_id, run_id)
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE pipeline_executions
+                SET status = 'RUNNING', started_at = COALESCE(started_at, NOW())
+                WHERE execution_id = %s
+                """,
+                (execution_id,)
+            )
         conn.commit()
         logger.info(f"Verified execution #{execution_id} for pipeline '{pipeline_name}'.")
     finally:
@@ -308,17 +324,32 @@ def task_finalize_execution_telemetry(**context):
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        dag_run = context.get("dag_run")
+        run_id = getattr(dag_run, "run_id", None) if dag_run else None
         comparison_rel = os.path.relpath(os.path.join(exec_dir, "model_comparison.json"), REPO_ROOT).replace("\\", "/")
-        cursor.execute(
-            """
-            UPDATE pipeline_executions
-            SET status = 'COMPLETED',
-                completed_at = NOW(),
-                output_location = %s
-            WHERE execution_id = %s
-            """,
-            (comparison_rel, execution_id)
-        )
+        if run_id:
+            cursor.execute(
+                """
+                UPDATE pipeline_executions
+                SET status = 'COMPLETED',
+                    completed_at = NOW(),
+                    output_location = %s
+                WHERE execution_id = %s
+                  AND airflow_run_id = %s
+                """,
+                (comparison_rel, execution_id, run_id)
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE pipeline_executions
+                SET status = 'COMPLETED',
+                    completed_at = NOW(),
+                    output_location = %s
+                WHERE execution_id = %s
+                """,
+                (comparison_rel, execution_id)
+            )
         conn.commit()
     finally:
         cursor.close()
@@ -336,6 +367,67 @@ def task_finalize_execution_telemetry(**context):
     return summary
 
 
+def handle_dag_failure(context):
+    """
+    Airflow DAG failure callback: ensures pipeline_executions row is marked FAILED
+    if the workflow encounters an unhandled task or process failure.
+    """
+    dag_run = context.get("dag_run")
+    conf = (dag_run.conf or {}) if dag_run else {}
+    execution_id = conf.get("execution_id")
+    if not execution_id:
+        ti = context.get("ti")
+        if ti:
+            try:
+                execution_id = ti.xcom_pull(task_ids="validate_input_datasets", key="execution_id")
+            except Exception:
+                pass
+
+    if execution_id:
+        try:
+            from common.database import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+            exc = context.get("exception")
+            err_msg = f"Airflow DAG run failed: {exc}" if exc else "Airflow DAG run failed."
+            run_id = getattr(dag_run, "run_id", None) if dag_run else None
+
+            # Conditional atomic update: only fail if not already COMPLETED and matches attempt
+            if run_id:
+                cursor.execute(
+                    """
+                    UPDATE pipeline_executions
+                    SET status = 'FAILED',
+                        completed_at = NOW(),
+                        error_message = %s,
+                        retry_error_type = 'DETERMINISTIC_APPLICATION'
+                    WHERE execution_id = %s
+                      AND status != 'COMPLETED'
+                      AND airflow_run_id = %s
+                    """,
+                    (err_msg, execution_id, run_id)
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE pipeline_executions
+                    SET status = 'FAILED',
+                        completed_at = NOW(),
+                        error_message = %s,
+                        retry_error_type = 'DETERMINISTIC_APPLICATION'
+                    WHERE execution_id = %s
+                      AND status != 'COMPLETED'
+                    """,
+                    (err_msg, execution_id)
+                )
+            conn.commit()
+            cursor.close()
+            conn.close()
+            logger.info(f"Updated pipeline_executions #{execution_id} to FAILED via failure callback.")
+        except Exception as e:
+            logger.error(f"Failed to record failure status in MySQL for execution #{execution_id}: {e}")
+
+
 # ---------------------------------------------------------------------------
 # DAG Definition
 # ---------------------------------------------------------------------------
@@ -346,6 +438,7 @@ default_args = {
     "email_on_retry": False,
     "retries": 1,
     "retry_delay": timedelta(seconds=30),
+    "on_failure_callback": handle_dag_failure,
 }
 
 if DAG is not None:

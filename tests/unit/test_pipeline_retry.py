@@ -213,6 +213,132 @@ class TestPipelineRetryService(unittest.TestCase):
         self.assertEqual(result["status"], "SKIPPED")
         self.assertIn("expected 'FAILED'", result["reason"])
 
+    def test_airflow_retry_skipped_when_previous_run_still_active(self):
+        """15. Retry is SKIPPED when the previous Airflow run is still running or queued."""
+        self.mock_cursor.fetchone.return_value = {
+            "execution_id": 207,
+            "pipeline_name": "Demand Forecast Pipeline",
+            "status": "FAILED",
+            "orchestrator": "AIRFLOW",
+            "airflow_dag_id": "supplysense_demand_forecast",
+            "airflow_run_id": "supplysense_exec_207_attempt_0",
+            "retry_count": 0,
+            "max_retries": 3,
+            "error_message": "Transient network timeout",
+            "triggering_event_id": 507
+        }
+
+        mock_client = MagicMock()
+        mock_client.get_dag_run.return_value = {"state": "running"}
+
+        result = retry_execution(207, connection=self.mock_conn, airflow_client=mock_client)
+
+        self.assertEqual(result["status"], "SKIPPED")
+        self.assertIn("still active (running)", result["reason"])
+        mock_client.get_dag_run.assert_called_once_with("supplysense_demand_forecast", "supplysense_exec_207_attempt_0")
+        # Ensure atomic claim UPDATE was NOT called
+        self.assertEqual(self.mock_cursor.execute.call_count, 1)  # only SELECT
+
+    def test_airflow_retry_skipped_when_airflow_status_indeterminate(self):
+        """16. Retry is SKIPPED when Airflow API returns timeout or connectivity error."""
+        airflow_mod = importlib.import_module('services.pipeline-runner.airflow_client')
+        AirflowTimeoutError = airflow_mod.AirflowTimeoutError
+
+        self.mock_cursor.fetchone.return_value = {
+            "execution_id": 208,
+            "pipeline_name": "Demand Forecast Pipeline",
+            "status": "FAILED",
+            "orchestrator": "AIRFLOW",
+            "airflow_dag_id": "supplysense_demand_forecast",
+            "airflow_run_id": "supplysense_exec_208_attempt_0",
+            "retry_count": 0,
+            "max_retries": 3,
+            "error_message": "Transient network timeout",
+            "triggering_event_id": 508
+        }
+
+        mock_client = MagicMock()
+        mock_client.get_dag_run.side_effect = AirflowTimeoutError("Airflow API timeout")
+
+        result = retry_execution(208, connection=self.mock_conn, airflow_client=mock_client)
+
+        self.assertEqual(result["status"], "SKIPPED")
+        self.assertIn("Unable to verify previous Airflow run state", result["reason"])
+        self.assertEqual(self.mock_cursor.execute.call_count, 1)
+
+    def test_retry_claim_atomically_establishes_new_airflow_run_id(self):
+        """17. Atomic claim immediately writes the new attempt run ID to MySQL before Airflow trigger."""
+        self.mock_cursor.fetchone.return_value = {
+            "execution_id": 209,
+            "pipeline_name": "Demand Forecast Pipeline",
+            "status": "FAILED",
+            "orchestrator": "AIRFLOW",
+            "airflow_dag_id": "supplysense_demand_forecast",
+            "airflow_run_id": "supplysense_exec_209_attempt_0",
+            "retry_count": 0,
+            "max_retries": 3,
+            "error_message": "Transient network timeout",
+            "triggering_event_id": 509
+        }
+        self.mock_cursor.rowcount = 1
+
+        mock_client = MagicMock()
+        mock_client.get_dag_run.return_value = {"state": "failed"}
+        mock_client.trigger_dag_run.return_value = {
+            "dag_id": "supplysense_demand_forecast",
+            "dag_run_id": "supplysense_exec_209_attempt_1",
+            "is_reused": False
+        }
+
+        result = retry_execution(209, connection=self.mock_conn, airflow_client=mock_client)
+
+        self.assertEqual(result["status"], "RUNNING")
+        self.assertEqual(result["airflow_run_id"], "supplysense_exec_209_attempt_1")
+
+        # Inspect atomic claim UPDATE query (call_args_list[1])
+        claim_call = self.mock_cursor.execute.call_args_list[1]
+        claim_sql = claim_call[0][0]
+        claim_params = claim_call[0][1]
+
+        self.assertIn("airflow_run_id = %s", claim_sql)
+        self.assertIn("supplysense_exec_209_attempt_1", claim_params)
+        self.assertEqual(claim_params[0], 1)  # new_retry_count = 1
+
+    def test_retry_trigger_failure_recovers_to_failed_with_backoff(self):
+        """18. Trigger failure during retry handoff transitions execution to FAILED with backoff."""
+        airflow_mod = importlib.import_module('services.pipeline-runner.airflow_client')
+        AirflowConnectionError = airflow_mod.AirflowConnectionError
+
+        self.mock_cursor.fetchone.return_value = {
+            "execution_id": 210,
+            "pipeline_name": "Demand Forecast Pipeline",
+            "status": "FAILED",
+            "orchestrator": "AIRFLOW",
+            "airflow_dag_id": "supplysense_demand_forecast",
+            "airflow_run_id": "supplysense_exec_210_attempt_0",
+            "retry_count": 0,
+            "max_retries": 3,
+            "error_message": "Transient network timeout",
+            "triggering_event_id": 510
+        }
+        self.mock_cursor.rowcount = 1
+
+        mock_client = MagicMock()
+        mock_client.get_dag_run.return_value = {"state": "failed"}
+        mock_client.trigger_dag_run.side_effect = AirflowConnectionError("Connection refused by Airflow")
+
+        result = retry_execution(210, connection=self.mock_conn, airflow_client=mock_client)
+
+        self.assertEqual(result["status"], "FAILED")
+        self.assertEqual(result["retry_count"], 1)
+        self.assertIsNotNone(result["next_retry_at"])
+        self.assertIn("Connection refused by Airflow", result["error"])
+
+        # Inspect failure UPDATE (call_args_list[2])
+        fail_call = self.mock_cursor.execute.call_args_list[2]
+        fail_sql = fail_call[0][0]
+        self.assertIn("status = 'FAILED'", fail_sql)
+
 
 if __name__ == '__main__':
     unittest.main()
