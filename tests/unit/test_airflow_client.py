@@ -53,8 +53,8 @@ class TestAirflowClient(unittest.TestCase):
         self.assertEqual(run_id_0, "supplysense_exec_10461_attempt_0")
         self.assertEqual(run_id_1, "supplysense_exec_10461_attempt_1")
 
-    def test_successful_dag_trigger(self):
-        """Verify successful DAG run trigger returns structured metadata."""
+    def test_successful_dag_trigger_http_201(self):
+        """Verify successful DAG run trigger on HTTP 201 returns structured metadata."""
         mock_resp = MagicMock()
         mock_resp.status_code = 201
         mock_resp.json.return_value = {
@@ -62,6 +62,34 @@ class TestAirflowClient(unittest.TestCase):
             "dag_run_id": "supplysense_exec_10461_attempt_0",
             "state": "queued",
             "execution_date": "2026-10-15T09:00:00Z"
+        }
+        self.mock_session.post.return_value = mock_resp
+
+        result = self.client.trigger_dag_run(
+            dag_id="supplysense_demand_forecast",
+            execution_id=10461,
+            pipeline_name="Demand Forecast Pipeline",
+            retry_count=0
+        )
+
+        self.assertEqual(result["dag_id"], "supplysense_demand_forecast")
+        self.assertEqual(result["dag_run_id"], "supplysense_exec_10461_attempt_0")
+        self.assertEqual(result["state"], "queued")
+        self.assertFalse(result["is_reused"])
+
+    def test_successful_dag_trigger_http_200(self):
+        """Verify successful DAG run trigger on HTTP 200 returns structured metadata."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "dag_id": "supplysense_demand_forecast",
+            "dag_run_id": "supplysense_exec_10461_attempt_0",
+            "state": "queued",
+            "execution_date": "2026-10-15T09:00:00Z",
+            "conf": {
+                "execution_id": 10461,
+                "pipeline_name": "Demand Forecast Pipeline"
+            }
         }
         self.mock_session.post.return_value = mock_resp
 
@@ -212,6 +240,98 @@ class TestAirflowClient(unittest.TestCase):
         self.mock_session.post.return_value = mock_resp
 
         with self.assertRaises(AirflowClientError):
+            self.client.trigger_dag_run(
+                dag_id="supplysense_demand_forecast",
+                execution_id=10461,
+                pipeline_name="Demand Forecast Pipeline"
+            )
+
+
+    def test_unexpected_http_response_raises_error(self):
+        """Verify unexpected HTTP status codes (e.g. 500, 502) raise AirflowClientError."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal Server Error"
+        self.mock_session.post.return_value = mock_resp
+
+        with self.assertRaises(AirflowClientError) as ctx:
+            self.client.trigger_dag_run(
+                dag_id="supplysense_demand_forecast",
+                execution_id=10461,
+                pipeline_name="Demand Forecast Pipeline"
+            )
+        self.assertIn("HTTP 500", str(ctx.exception))
+
+    def test_trigger_response_missing_run_id_raises_error(self):
+        """Verify response without dag_run_id raises AirflowClientError."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "dag_id": "supplysense_demand_forecast",
+            "state": "queued"
+        }
+        self.mock_session.post.return_value = mock_resp
+
+        with self.assertRaises(AirflowClientError) as ctx:
+            self.client.trigger_dag_run(
+                dag_id="supplysense_demand_forecast",
+                execution_id=10461,
+                pipeline_name="Demand Forecast Pipeline"
+            )
+        self.assertIn("missing 'dag_run_id'", str(ctx.exception))
+
+    def test_trigger_response_mismatched_dag_id_raises_error(self):
+        """Verify response with different dag_id raises AirflowExecutionMismatchError."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "dag_id": "different_dag_id",
+            "dag_run_id": "supplysense_exec_10461_attempt_0",
+            "state": "queued"
+        }
+        self.mock_session.post.return_value = mock_resp
+
+        with self.assertRaises(AirflowExecutionMismatchError):
+            self.client.trigger_dag_run(
+                dag_id="supplysense_demand_forecast",
+                execution_id=10461,
+                pipeline_name="Demand Forecast Pipeline"
+            )
+
+    def test_trigger_response_mismatched_run_id_raises_error(self):
+        """Verify response with different dag_run_id raises AirflowExecutionMismatchError."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "dag_id": "supplysense_demand_forecast",
+            "dag_run_id": "different_run_id",
+            "state": "queued"
+        }
+        self.mock_session.post.return_value = mock_resp
+
+        with self.assertRaises(AirflowExecutionMismatchError):
+            self.client.trigger_dag_run(
+                dag_id="supplysense_demand_forecast",
+                execution_id=10461,
+                pipeline_name="Demand Forecast Pipeline"
+            )
+
+    def test_trigger_response_mismatched_conf_raises_error(self):
+        """Verify response with mismatched conf raises AirflowExecutionMismatchError."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "dag_id": "supplysense_demand_forecast",
+            "dag_run_id": "supplysense_exec_10461_attempt_0",
+            "state": "queued",
+            "conf": {
+                "execution_id": 99999,
+                "pipeline_name": "Demand Forecast Pipeline"
+            }
+        }
+        self.mock_session.post.return_value = mock_resp
+
+        with self.assertRaises(AirflowExecutionMismatchError):
             self.client.trigger_dag_run(
                 dag_id="supplysense_demand_forecast",
                 execution_id=10461,

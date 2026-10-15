@@ -234,7 +234,7 @@ class TestPhaseCAirflowIntegration(unittest.TestCase):
         self.assertEqual(detail["airflow_run_id"], "supplysense_exec_91004_attempt_0")
 
         # Test get_recent_executions
-        recent = obs_service.get_recent_executions(limit=10, connection=self.conn)
+        recent = obs_service.get_recent_executions(limit=50, connection=self.conn)
         target = next((item for item in recent if item["execution_id"] == exec_id), None)
         self.assertIsNotNone(target)
         self.assertEqual(target["orchestrator"], "AIRFLOW")

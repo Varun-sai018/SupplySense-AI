@@ -160,7 +160,7 @@ class AirflowClient:
                 f"Could not connect to Airflow REST API at {self.base_url}: {conn_exc}"
             ) from conn_exc
 
-        if resp.status_code == 201:
+        if resp.status_code in (200, 201):
             try:
                 data = resp.json()
             except ValueError as e:
@@ -168,7 +168,20 @@ class AirflowClient:
 
             returned_run_id = data.get("dag_run_id")
             if not returned_run_id:
-                raise AirflowClientError(f"Airflow API 201 response missing 'dag_run_id': {data}")
+                raise AirflowClientError(f"Airflow API {resp.status_code} response missing 'dag_run_id': {data}")
+
+            returned_dag_id = data.get("dag_id")
+            if returned_dag_id and returned_dag_id != dag_id:
+                raise AirflowExecutionMismatchError(
+                    f"Airflow API response dag_id '{returned_dag_id}' does not match expected '{dag_id}'."
+                )
+
+            if returned_run_id != dag_run_id:
+                raise AirflowExecutionMismatchError(
+                    f"Airflow API response dag_run_id '{returned_run_id}' does not match expected '{dag_run_id}'."
+                )
+
+            self._validate_existing_conf(data, execution_id, pipeline_name, returned_run_id)
 
             logger.info(f"Successfully triggered DAG '{dag_id}' run '{returned_run_id}' for execution #{execution_id}.")
             return {
