@@ -85,6 +85,23 @@ def execute_pipeline(
         """, (now, active_orchestrator, execution_id))
         connection.commit()
 
+        # Emit RUNNING Lifecycle Event
+        try:
+            from services.observability.publisher import publish_dashboard_event
+            publish_dashboard_event(
+                event_type="PIPELINE_STATUS_CHANGED",
+                entity="PIPELINE",
+                severity="INFO",
+                execution_id=execution_id,
+                data={
+                    "pipeline_name": pipeline_name,
+                    "status": "RUNNING",
+                    "orchestrator": active_orchestrator
+                }
+            )
+        except Exception:
+            pass
+
         # Step 2: Handle AIRFLOW Dispatch Mode
         if active_orchestrator == "AIRFLOW":
             logger.info(
@@ -168,6 +185,24 @@ def execute_pipeline(
                 """, (datetime.datetime.now(), error_msg, err_type, next_retry, execution_id))
                 connection.commit()
 
+                try:
+                    from services.observability.publisher import publish_dashboard_event
+                    publish_dashboard_event(
+                        event_type="PIPELINE_STATUS_CHANGED",
+                        entity="PIPELINE",
+                        severity="ERROR",
+                        execution_id=execution_id,
+                        data={
+                            "pipeline_name": pipeline_name,
+                            "status": "FAILED",
+                            "orchestrator": "AIRFLOW",
+                            "error": error_msg,
+                            "retry_error_type": err_type
+                        }
+                    )
+                except Exception:
+                    pass
+
                 return {
                     "execution_id": execution_id,
                     "pipeline_name": pipeline_name,
@@ -195,6 +230,24 @@ def execute_pipeline(
                 WHERE execution_id = %s
             """, (datetime.datetime.now(), error_msg, execution_id))
             connection.commit()
+
+            try:
+                from services.observability.publisher import publish_dashboard_event
+                publish_dashboard_event(
+                    event_type="PIPELINE_STATUS_CHANGED",
+                    entity="PIPELINE",
+                    severity="ERROR",
+                    execution_id=execution_id,
+                    data={
+                        "pipeline_name": pipeline_name,
+                        "status": "FAILED",
+                        "orchestrator": "LOCAL",
+                        "error": error_msg,
+                        "retry_error_type": "DETERMINISTIC_CONFIG"
+                    }
+                )
+            except Exception:
+                pass
 
             return {
                 "execution_id": execution_id,
@@ -239,6 +292,24 @@ def execute_pipeline(
             """, (datetime.datetime.now(), error_msg, err_type, next_retry, execution_id))
             connection.commit()
 
+            try:
+                from services.observability.publisher import publish_dashboard_event
+                publish_dashboard_event(
+                    event_type="PIPELINE_STATUS_CHANGED",
+                    entity="PIPELINE",
+                    severity="ERROR",
+                    execution_id=execution_id,
+                    data={
+                        "pipeline_name": pipeline_name,
+                        "status": "FAILED",
+                        "orchestrator": "LOCAL",
+                        "error": error_msg,
+                        "retry_error_type": err_type
+                    }
+                )
+            except Exception:
+                pass
+
             return {
                 "execution_id": execution_id,
                 "pipeline_name": pipeline_name,
@@ -263,6 +334,25 @@ def execute_pipeline(
         connection.commit()
 
         logger.info(f"Pipeline '{pipeline_name}' execution #{execution_id} successfully marked COMPLETED.")
+
+        # Emit Live Dashboard Event
+        try:
+            from services.observability.publisher import publish_dashboard_event
+            publish_dashboard_event(
+                event_type="PIPELINE_STATUS_CHANGED",
+                entity="PIPELINE",
+                severity="INFO",
+                execution_id=execution_id,
+                data={
+                    "pipeline_name": pipeline_name,
+                    "status": "COMPLETED",
+                    "orchestrator": active_orchestrator,
+                    "output_location": output_location
+                }
+            )
+        except Exception:
+            pass
+
         return {
             "execution_id": execution_id,
             "pipeline_name": pipeline_name,
