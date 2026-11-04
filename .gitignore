@@ -10,3 +10,8 @@ data/processed/
 ml/results/executions/*
 !ml/results/executions/.gitkeep
 *.log
+Olist/
+data/olist_split/historical/
+data/olist_split/simulation/
+scratch/
+*.backup

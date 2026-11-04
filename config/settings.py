@@ -77,10 +77,21 @@ PIPELINE_RETRY_MAX_DELAY_SECONDS = int(_get_env("PIPELINE_RETRY_MAX_DELAY_SECOND
 PIPELINE_ORCHESTRATOR = _get_env("PIPELINE_ORCHESTRATOR", required=False) or "LOCAL"
 
 # Airflow REST API endpoint and credentials (admin/admin is development-only)
-AIRFLOW_BASE_URL = _get_env("AIRFLOW_BASE_URL", required=False) or "http://localhost:8080"
+# Host default is port 18080 — Docker Compose maps host:18080 → container:8080.
+# Container-to-container communication should override via AIRFLOW_BASE_URL=http://airflow-webserver:8080.
+AIRFLOW_BASE_URL = _get_env("AIRFLOW_BASE_URL", required=False) or "http://localhost:18080"
 AIRFLOW_API_USER = _get_env("AIRFLOW_API_USER", required=False) or "admin"
 AIRFLOW_API_PASSWORD = _get_env("AIRFLOW_API_PASSWORD", required=False) or "admin"
 AIRFLOW_DAG_ID = _get_env("AIRFLOW_DAG_ID", required=False) or "supplysense_demand_forecast"
 AIRFLOW_REQUEST_TIMEOUT_SECONDS = int(
     _get_env("AIRFLOW_REQUEST_TIMEOUT_SECONDS", required=False) or 10
 )
+
+
+# ==============================================================================
+# Dependency Engine Configuration (Phase 2)
+# ==============================================================================
+DEPENDENCY_ENGINE_TRANSPORT = _get_env("DEPENDENCY_ENGINE_TRANSPORT", required=False) or "MYSQL"
+DEPENDENCY_POLL_INTERVAL_SECONDS = float(_get_env("DEPENDENCY_POLL_INTERVAL_SECONDS", required=False) or 1.0)
+DEPENDENCY_BATCH_SIZE = int(_get_env("DEPENDENCY_BATCH_SIZE", required=False) or 10)
+DEPENDENCY_STALE_TIMEOUT_SECONDS = int(_get_env("DEPENDENCY_STALE_TIMEOUT_SECONDS", required=False) or 300)
