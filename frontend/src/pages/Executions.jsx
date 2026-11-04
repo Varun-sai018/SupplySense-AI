@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PlayCircle, Filter, Eye, AlertCircle, RefreshCw } from 'lucide-react';
+import { PlayCircle, Filter, Eye, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Layers } from 'lucide-react';
 import { getExecutions } from '../api/client';
 import StatusBadge from '../components/StatusBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -8,9 +8,14 @@ import ExecutionModal from '../components/ExecutionModal';
 
 export default function Executions({ refreshTrigger }) {
   const [executions, setExecutions] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
+  // Filters & Pagination State
+  const [scopeFilter, setScopeFilter] = useState('OPERATIONAL');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
   const [selectedExecId, setSelectedExecId] = useState(null);
 
@@ -18,7 +23,12 @@ export default function Executions({ refreshTrigger }) {
     let isMounted = true;
     setLoading(true);
 
-    const params = { limit };
+    const offset = (page - 1) * limit;
+    const params = {
+      scope: scopeFilter,
+      limit,
+      offset
+    };
     if (statusFilter !== 'ALL') {
       params.status = statusFilter;
     }
@@ -26,7 +36,16 @@ export default function Executions({ refreshTrigger }) {
     getExecutions(params)
       .then((data) => {
         if (isMounted) {
-          setExecutions(data || []);
+          if (data && Array.isArray(data.items)) {
+            setExecutions(data.items);
+            setTotalCount(data.total_count ?? data.items.length);
+          } else if (Array.isArray(data)) {
+            setExecutions(data);
+            setTotalCount(data.length);
+          } else {
+            setExecutions([]);
+            setTotalCount(0);
+          }
           setError(null);
         }
       })
@@ -42,7 +61,26 @@ export default function Executions({ refreshTrigger }) {
     return () => {
       isMounted = false;
     };
-  }, [statusFilter, limit, refreshTrigger]);
+  }, [scopeFilter, statusFilter, page, limit, refreshTrigger]);
+
+  const handleScopeChange = (e) => {
+    setScopeFilter(e.target.value);
+    setPage(1);
+  };
+
+  const handleStatusChange = (e) => {
+    setStatusFilter(e.target.value);
+    setPage(1);
+  };
+
+  const handleLimitChange = (e) => {
+    setLimit(Number(e.target.value));
+    setPage(1);
+  };
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+  const startItem = totalCount === 0 ? 0 : (page - 1) * limit + 1;
+  const endItem = Math.min(page * limit, totalCount);
 
   return (
     <div className="space-y-6">
@@ -57,13 +95,28 @@ export default function Executions({ refreshTrigger }) {
 
         {/* Filter Controls */}
         <div className="flex flex-wrap items-center gap-3">
+          {/* Scope Filter */}
+          <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs">
+            <Layers className="w-3.5 h-3.5 text-sky-400" />
+            <span className="text-slate-400 font-medium">Scope:</span>
+            <select
+              value={scopeFilter}
+              onChange={handleScopeChange}
+              className="bg-transparent text-white font-semibold focus:outline-none cursor-pointer"
+            >
+              <option value="OPERATIONAL" className="bg-slate-900 text-white">Operational</option>
+              <option value="SIMULATED" className="bg-slate-900 text-white">Simulated</option>
+              <option value="ALL" className="bg-slate-900 text-white">All (Unfiltered)</option>
+            </select>
+          </div>
+
           {/* Status Filter */}
           <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs">
             <Filter className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-slate-400 font-medium">Status:</span>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={handleStatusChange}
               className="bg-transparent text-white font-semibold focus:outline-none cursor-pointer"
             >
               <option value="ALL" className="bg-slate-900 text-white">All Statuses</option>
@@ -75,15 +128,15 @@ export default function Executions({ refreshTrigger }) {
 
           {/* Limit Selector */}
           <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs">
-            <span className="text-slate-400 font-medium">Rows:</span>
+            <span className="text-slate-400 font-medium">Page Size:</span>
             <select
               value={limit}
-              onChange={(e) => setLimit(Number(e.target.value))}
+              onChange={handleLimitChange}
               className="bg-transparent text-white font-semibold focus:outline-none cursor-pointer"
             >
+              <option value={10} className="bg-slate-900 text-white">10</option>
               <option value={20} className="bg-slate-900 text-white">20</option>
               <option value={50} className="bg-slate-900 text-white">50</option>
-              <option value={100} className="bg-slate-900 text-white">100</option>
             </select>
           </div>
         </div>
@@ -106,8 +159,8 @@ export default function Executions({ refreshTrigger }) {
             <EmptyState 
               title="No executions found" 
               description={statusFilter !== 'ALL' 
-                ? `No pipeline executions found with status '${statusFilter}'.` 
-                : 'No pipeline executions have run yet.'} 
+                ? `No ${scopeFilter.toLowerCase()} pipeline executions found with status '${statusFilter}'.` 
+                : `No ${scopeFilter.toLowerCase()} pipeline executions recorded.`} 
             />
           </div>
         ) : (
@@ -116,6 +169,7 @@ export default function Executions({ refreshTrigger }) {
               <thead className="bg-slate-900/60 text-slate-400 uppercase font-semibold border-b border-slate-700/60 tracking-wider">
                 <tr>
                   <th className="py-3.5 px-4">Execution</th>
+                  <th className="py-3.5 px-4">Classification</th>
                   <th className="py-3.5 px-4">Pipeline</th>
                   <th className="py-3.5 px-4">Status</th>
                   <th className="py-3.5 px-4">Retries</th>
@@ -126,18 +180,31 @@ export default function Executions({ refreshTrigger }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/40 font-mono">
-                {executions.map((exec) => (
-                  <tr 
-                    key={exec.execution_id}
-                    onClick={() => setSelectedExecId(exec.execution_id)}
-                    className="hover:bg-slate-700/40 transition-colors cursor-pointer group"
-                  >
-                    <td className="py-3.5 px-4 font-bold text-sky-400">
-                      #{exec.execution_id}
-                    </td>
-                    <td className="py-3.5 px-4 font-sans font-medium text-slate-200">
-                      {exec.pipeline_name}
-                    </td>
+                {executions.map((exec) => {
+                  const isSimulated = exec.pipeline_name?.startsWith('SIM-') || exec.scope === 'SIMULATED';
+                  return (
+                    <tr 
+                      key={exec.execution_id}
+                      onClick={() => setSelectedExecId(exec.execution_id)}
+                      className="hover:bg-slate-700/40 transition-colors cursor-pointer group"
+                    >
+                      <td className="py-3.5 px-4 font-bold text-sky-400">
+                        #{exec.execution_id}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wide border ${
+                            isSimulated
+                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          }`}
+                        >
+                          {isSimulated ? 'SIMULATED' : 'OPERATIONAL'}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 font-sans font-medium text-slate-200">
+                        {exec.pipeline_name}
+                      </td>
                     <td className="py-3.5 px-4">
                       <StatusBadge status={exec.status} size="sm" />
                     </td>
@@ -169,15 +236,44 @@ export default function Executions({ refreshTrigger }) {
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
+                );
+              })}
+            </tbody>
             </table>
           </div>
         )}
 
-        <div className="px-5 py-3 border-t border-slate-700/60 bg-slate-900/40 text-xs text-slate-400 flex items-center justify-between font-sans">
-          <span>Showing {executions.length} executions</span>
-          <span className="text-slate-500 hidden sm:inline">Click any row to inspect decision rules & scoped artifact files</span>
+        {/* Pagination Toolbar */}
+        <div className="px-5 py-3 border-t border-slate-700/60 bg-slate-900/40 text-xs text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-3 font-sans">
+          <span>
+            Showing <strong className="text-slate-200 font-mono">{startItem}</strong> to{' '}
+            <strong className="text-slate-200 font-mono">{endItem}</strong> of{' '}
+            <strong className="text-slate-200 font-mono">{totalCount}</strong> executions
+          </span>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1 || loading}
+              className="px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Previous</span>
+            </button>
+
+            <span className="px-2 text-slate-400 text-xs font-mono">
+              Page <span className="text-white font-bold">{page}</span> of {totalPages}
+            </span>
+
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages || loading}
+              className="px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+            >
+              <span>Next</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 
