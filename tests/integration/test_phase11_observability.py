@@ -132,19 +132,24 @@ class TestPhase11ObservabilityIntegration(unittest.TestCase):
         res = self.client.get("/api/observability/executions?limit=10")
         self.assertEqual(res.status_code, 200)
         data = res.json()
-        self.assertIsInstance(data, list)
-        self.assertLessEqual(len(data), 10)
+        items = data["items"] if isinstance(data, dict) else data
+        self.assertIsInstance(items, list)
+        self.assertLessEqual(len(items), 10)
 
         # Filter by status = COMPLETED
         res_completed = self.client.get("/api/observability/executions?status=COMPLETED")
         self.assertEqual(res_completed.status_code, 200)
-        for row in res_completed.json():
+        completed_data = res_completed.json()
+        completed_items = completed_data["items"] if isinstance(completed_data, dict) else completed_data
+        for row in completed_items:
             self.assertEqual(row["status"], "COMPLETED")
 
         # Filter by status = FAILED
         res_failed = self.client.get("/api/observability/executions?status=FAILED")
         self.assertEqual(res_failed.status_code, 200)
-        for row in res_failed.json():
+        failed_data = res_failed.json()
+        failed_items = failed_data["items"] if isinstance(failed_data, dict) else failed_data
+        for row in failed_items:
             self.assertEqual(row["status"], "FAILED")
 
     def test_execution_detail_endpoint(self):
@@ -172,9 +177,10 @@ class TestPhase11ObservabilityIntegration(unittest.TestCase):
         res = self.client.get("/api/observability/datasets")
         self.assertEqual(res.status_code, 200)
         data = res.json()
-        self.assertIsInstance(data, list)
-        self.assertGreater(len(data), 0)
-        names = [d["dataset_name"] for d in data]
+        items = data["items"] if isinstance(data, dict) else data
+        self.assertIsInstance(items, list)
+        self.assertGreater(len(items), 0)
+        names = [d["dataset_name"] for d in items]
         self.assertIn("Orders", names)
 
     def test_dependencies_endpoint(self):

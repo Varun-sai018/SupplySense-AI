@@ -56,6 +56,12 @@ class TestObservabilityUnit(unittest.TestCase):
         self.assertIsNotNone(duration)
         self.assertGreaterEqual(duration, 11.0)
 
+    def test_duration_calculation_subsecond_zero(self):
+        """Test duration calculation for subsecond or same-second executions."""
+        same_time = datetime.datetime(2026, 10, 27, 12, 0, 0)
+        duration = service._calculate_duration(same_time, same_time, "COMPLETED")
+        self.assertEqual(duration, 0.0)
+
     def test_duration_calculation_null(self):
         """Test duration calculation with missing or invalid timestamps."""
         self.assertIsNone(service._calculate_duration(None, None, "COMPLETED"))
@@ -219,6 +225,25 @@ class TestObservabilityUnit(unittest.TestCase):
         res_unhealthy = self.client.get("/health")
         self.assertEqual(res_unhealthy.status_code, 200)
         self.assertEqual(res_unhealthy.json(), {"status": "unhealthy", "database": "disconnected"})
+
+    def test_get_execution_counts_completed_only(self):
+        """Verifies get_execution_counts query only averages COMPLETED executions."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = {
+            "total": 5, "running": 1, "completed": 3, "failed": 1,
+            "retrying": 0, "retried_total": 0, "avg_duration_seconds": 15.5
+        }
+        mock_conn.cursor.return_value = mock_cursor
+
+        result = repository.get_execution_counts(connection=mock_conn)
+        self.assertEqual(result["completed"], 3)
+        self.assertEqual(result["avg_duration_seconds"], 15.5)
+
+        # Inspect executed SQL to ensure status = 'COMPLETED' is used
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        self.assertIn("status = 'COMPLETED'", executed_sql)
+        self.assertNotIn("status IN ('COMPLETED', 'FAILED')", executed_sql)
 
     def test_no_sensitive_secrets_exposed(self):
         """Verify endpoints and responses do not leak sensitive environment or database secrets."""
