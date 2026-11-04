@@ -1,0 +1,21 @@
+{
+  "cutoff_timestamp": "2018-05-28 00:00:00",
+  "historical": {
+    "dir": "C:\\Users\\varun sai\\PycharmProjects\\PythonProject\\capstone\\data\\olist_split\\historical",
+    "orders_count": 79885,
+    "items_count": 90587,
+    "date_range": [
+      "2016-09-04 21:15:19",
+      "2018-05-27 23:56:01"
+    ]
+  },
+  "simulation": {
+    "dir": "C:\\Users\\varun sai\\PycharmProjects\\PythonProject\\capstone\\data\\olist_split\\simulation",
+    "orders_count": 19556,
+    "items_count": 22063,
+    "date_range": [
+      "2018-05-28 00:07:28",
+      "2018-10-17 17:30:18"
+    ]
+  }
+}

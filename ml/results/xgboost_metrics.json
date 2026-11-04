@@ -16,32 +16,32 @@
       "quarter"
     ],
     "hyperparameters": {
-      "n_estimators": 10,
+      "n_estimators": 500,
       "learning_rate": 0.05,
       "max_depth": 6,
       "subsample": 0.8,
       "colsample_bytree": 0.8,
       "random_state": 42,
-      "best_iteration": 9
+      "best_iteration": 45
     },
-    "created_at": "2026-10-01T10:00:46.204861"
+    "created_at": "2026-11-04T15:59:23.731734"
   },
   "results": [
     {
       "model": "XGBoost",
       "split": "Validation",
-      "prediction_count": 8,
-      "mae": 5.280067205429077,
-      "rmse": 6.321070511980632,
-      "r2": 0.5433607723722161
+      "prediction_count": 807,
+      "mae": 8.267004391813218,
+      "rmse": 16.671278390988842,
+      "r2": 0.8806200165601065
     },
     {
       "model": "XGBoost",
       "split": "Test",
-      "prediction_count": 10,
-      "mae": 5.522728157043457,
-      "rmse": 6.757863495265709,
-      "r2": 0.5701767621586367
+      "prediction_count": 770,
+      "mae": 9.345153875319989,
+      "rmse": 18.310183390653467,
+      "r2": 0.8292139571293528
     }
   ]
 }
