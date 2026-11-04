@@ -8,7 +8,8 @@ export default function Navbar({
   lastUpdated, 
   onManualRefresh, 
   refreshing,
-  toggleSidebar
+  toggleSidebar,
+  sseStatus
 }) {
   return (
     <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 lg:px-6 py-3 flex items-center justify-between">
@@ -44,6 +45,43 @@ export default function Navbar({
 
       {/* Right Controls: Health Badge & Auto Refresh */}
       <div className="flex items-center gap-3">
+        {/* SSE Stream Status Badge */}
+        {sseStatus && (
+          <div
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+              sseStatus === 'CONNECTED' || sseStatus === 'LIVE'
+                ? 'bg-sky-500/10 text-sky-400 border-sky-500/20'
+                : sseStatus === 'CONNECTING'
+                ? 'bg-sky-500/10 text-sky-300 border-sky-500/20'
+                : sseStatus === 'RECONNECTING'
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+            }`}
+            title={
+              sseStatus === 'CONNECTED' || sseStatus === 'LIVE'
+                ? 'SSE Connected: Real-time event stream active'
+                : sseStatus === 'CONNECTING'
+                ? 'SSE Connecting: Establishing stream connection...'
+                : sseStatus === 'RECONNECTING'
+                ? 'SSE Reconnecting: Stream lost, retrying with exponential backoff...'
+                : 'SSE Offline: Real-time stream disconnected, polling fallback active'
+            }
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                sseStatus === 'CONNECTED' || sseStatus === 'LIVE'
+                  ? 'bg-sky-400 animate-pulse'
+                  : sseStatus === 'CONNECTING'
+                  ? 'bg-sky-300 animate-pulse'
+                  : sseStatus === 'RECONNECTING'
+                  ? 'bg-amber-400 animate-ping'
+                  : 'bg-rose-500'
+              }`}
+            />
+            <span>SSE {sseStatus}</span>
+          </div>
+        )}
+
         {/* Backend Health Badge */}
         <div 
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
@@ -57,6 +95,7 @@ export default function Navbar({
           <span className="hidden md:inline">{isHealthy ? 'System Healthy' : 'Backend Offline'}</span>
           <span className="md:hidden">{isHealthy ? 'Healthy' : 'Offline'}</span>
         </div>
+
 
         {/* Live Auto-Refresh Controller */}
         <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-xl px-2.5 py-1">

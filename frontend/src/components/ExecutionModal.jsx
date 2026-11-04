@@ -53,6 +53,17 @@ export default function ExecutionModal({ executionId, onClose }) {
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-bold text-white">Execution #{executionId}</h2>
                 {data && <StatusBadge status={data.status} size="sm" />}
+                {data && (
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wide border ${
+                      data.pipeline_name?.startsWith('SIM-')
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                        : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    }`}
+                  >
+                    {data.pipeline_name?.startsWith('SIM-') ? 'SIMULATED' : 'OPERATIONAL'}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400">
                 {data?.pipeline_name || 'Pipeline Execution Telemetry Audit'}
@@ -83,12 +94,25 @@ export default function ExecutionModal({ executionId, onClose }) {
 
           {data && !loading && (
             <>
+              {/* Simulation Transparency Disclaimer */}
+              {data.pipeline_name?.startsWith('SIM-') && (
+                <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-200 flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-400" />
+                  <div className="text-xs leading-relaxed">
+                    <span className="font-bold text-amber-300 uppercase tracking-wider block mb-0.5">
+                      Simulated Pipeline Execution Notice
+                    </span>
+                    This execution evaluated event-conditioned dependency rules in an isolated synthetic simulation harness. It did <strong className="text-white underline">not</strong> trigger actual Apache Airflow DAGs, execute ML training/XGBoost inference pipelines, or mutate operational database tables.
+                  </div>
+                </div>
+              )}
+
               {/* Core Execution Summary Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/50">
                   <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider block">Duration</span>
                   <span className="text-base font-bold text-white mt-1 block">
-                    {data.duration_seconds !== null ? `${data.duration_seconds}s` : '—'}
+                    {data.duration_seconds !== null ? (data.duration_seconds === 0 ? '< 1s' : `${data.duration_seconds}s`) : '—'}
                   </span>
                 </div>
                 <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/50">
@@ -222,6 +246,106 @@ export default function ExecutionModal({ executionId, onClose }) {
                   </div>
                 </div>
               )}
+
+              {/* Section 2b: Model Benchmark Comparison (Naive Baseline vs XGBoost) */}
+              {data.model_comparison && (
+                <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-sky-400" />
+                      <h3 className="text-sm font-semibold text-white">Model Comparison Metrics</h3>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wide bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                      HISTORICAL BENCHMARK
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-400 mb-3">
+                    Side-by-side empirical performance of the 1-step rolling Naive Baseline vs. trained XGBoost Regressor from this run's isolated <code className="font-mono text-slate-300">model_comparison.json</code> artifact.
+                  </p>
+
+                  <div className="space-y-4">
+                    {/* Validation Split Table */}
+                    {data.model_comparison.validation && (
+                      <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/60">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 text-slate-400 text-left bg-slate-900/80">
+                              <th className="py-2 px-3 font-semibold">Validation Metric</th>
+                              <th className="py-2 px-3 text-right font-semibold">Naive Baseline</th>
+                              <th className="py-2 px-3 text-right font-semibold">XGBoost Regressor</th>
+                              <th className="py-2 px-3 text-right font-semibold">Advantage</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/50 font-mono">
+                            <tr>
+                              <td className="py-2 px-3 font-sans text-slate-300">MAE (Mean Absolute Error)</td>
+                              <td className="py-2 px-3 text-right text-emerald-400 font-semibold">{data.model_comparison.validation.naive_baseline.mae}</td>
+                              <td className="py-2 px-3 text-right text-slate-300">{data.model_comparison.validation.xgboost.mae}</td>
+                              <td className="py-2 px-3 text-right font-sans text-[11px] text-emerald-400">Baseline lower</td>
+                            </tr>
+                            <tr>
+                              <td className="py-2 px-3 font-sans text-slate-300">RMSE (Root Mean Squared Error)</td>
+                              <td className="py-2 px-3 text-right text-emerald-400 font-semibold">{data.model_comparison.validation.naive_baseline.rmse}</td>
+                              <td className="py-2 px-3 text-right text-slate-300">{data.model_comparison.validation.xgboost.rmse}</td>
+                              <td className="py-2 px-3 text-right font-sans text-[11px] text-emerald-400">Baseline lower</td>
+                            </tr>
+                            <tr>
+                              <td className="py-2 px-3 font-sans text-slate-300">R² (Variance Explained)</td>
+                              <td className="py-2 px-3 text-right text-emerald-400 font-semibold">{data.model_comparison.validation.naive_baseline.r2}</td>
+                              <td className="py-2 px-3 text-right text-slate-300">{data.model_comparison.validation.xgboost.r2}</td>
+                              <td className="py-2 px-3 text-right font-sans text-[11px] text-emerald-400">Baseline higher</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Test Split Table */}
+                    {data.model_comparison.test && (
+                      <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/60">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 text-slate-400 text-left bg-slate-900/80">
+                              <th className="py-2 px-3 font-semibold">Test Holdout Metric (14 Weeks)</th>
+                              <th className="py-2 px-3 text-right font-semibold">Naive Baseline</th>
+                              <th className="py-2 px-3 text-right font-semibold">XGBoost Regressor</th>
+                              <th className="py-2 px-3 text-right font-semibold">Advantage</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/50 font-mono">
+                            <tr>
+                              <td className="py-2 px-3 font-sans text-slate-300">MAE (Mean Absolute Error)</td>
+                              <td className="py-2 px-3 text-right text-slate-300">{data.model_comparison.test.naive_baseline.mae}</td>
+                              <td className="py-2 px-3 text-right text-emerald-400 font-semibold">{data.model_comparison.test.xgboost.mae}</td>
+                              <td className="py-2 px-3 text-right font-sans text-[11px] text-emerald-400">XGBoost lower (~2%)</td>
+                            </tr>
+                            <tr>
+                              <td className="py-2 px-3 font-sans text-slate-300">RMSE (Root Mean Squared Error)</td>
+                              <td className="py-2 px-3 text-right text-emerald-400 font-semibold">{data.model_comparison.test.naive_baseline.rmse}</td>
+                              <td className="py-2 px-3 text-right text-slate-300">{data.model_comparison.test.xgboost.rmse}</td>
+                              <td className="py-2 px-3 text-right font-sans text-[11px] text-emerald-400">Baseline lower</td>
+                            </tr>
+                            <tr>
+                              <td className="py-2 px-3 font-sans text-slate-300">R² (Variance Explained)</td>
+                              <td className="py-2 px-3 text-right text-slate-300">{data.model_comparison.test.naive_baseline.r2}</td>
+                              <td className="py-2 px-3 text-right text-slate-300">{data.model_comparison.test.xgboost.r2}</td>
+                              <td className="py-2 px-3 text-right font-sans text-[11px] text-slate-400">Comparable (~0.83)</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Metric Guide Note */}
+                    <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 text-[11px] text-slate-400 space-y-1">
+                      <p><span className="text-slate-300 font-semibold">Metric Guide:</span> Lower MAE/RMSE indicates smaller demand error. Higher R² indicates better fit (1.0 = perfect).</p>
+                      <p><span className="text-slate-300 font-semibold">Empirical Finding:</span> The Naive Baseline (predicting week T from week T-1) achieves lower error on the Validation split. XGBoost edges out baseline on Test MAE by ~1.95%, but baseline retains lower RMSE, showing the importance of honest benchmarking.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
 
               {/* Section 3: Scoped Execution Artifacts (Phase 10) */}
               <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4">

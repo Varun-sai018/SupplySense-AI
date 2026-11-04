@@ -12,16 +12,16 @@ export default function StatusBadge({ status, size = 'md' }) {
   let style = 'bg-slate-700 text-slate-300 border-slate-600';
   let dotColor = 'bg-slate-400';
 
-  if (['COMPLETED', 'READY', 'TRIGGER', 'HEALTHY', 'CONNECTED'].includes(normalized)) {
+  if (['COMPLETED', 'READY', 'TRIGGER', 'HEALTHY', 'CONNECTED', 'DELIVERED', 'ONLINE', 'IN_STOCK', 'OPTIMAL'].includes(normalized)) {
     style = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
     dotColor = 'bg-emerald-400';
-  } else if (['RUNNING', 'WAITING'].includes(normalized)) {
+  } else if (['RUNNING', 'WAITING', 'DISPATCHED', 'IN_TRANSIT'].includes(normalized)) {
     style = 'bg-sky-500/10 text-sky-400 border-sky-500/20';
     dotColor = 'bg-sky-400 animate-pulse';
-  } else if (['BLOCK', 'RETRYING'].includes(normalized)) {
+  } else if (['BLOCK', 'RETRYING', 'CONFIRMED', 'LOW_STOCK', 'DEGRADED'].includes(normalized)) {
     style = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
     dotColor = 'bg-amber-400';
-  } else if (['FAILED', 'UNHEALTHY', 'DISCONNECTED', 'ERROR'].includes(normalized)) {
+  } else if (['FAILED', 'UNHEALTHY', 'DISCONNECTED', 'ERROR', 'CANCELLED', 'OFFLINE', 'OUT_OF_STOCK'].includes(normalized)) {
     style = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
     dotColor = 'bg-rose-400';
   }

@@ -7,15 +7,19 @@ import {
   GitBranch, 
   TrendingUp, 
   X,
-  Workflow
+  Workflow,
+  Package,
+  FlaskConical,
 } from 'lucide-react';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/inventory', label: 'Inventory & Supply', icon: Package },
   { to: '/executions', label: 'Executions', icon: PlayCircle },
   { to: '/datasets', label: 'Datasets', icon: Database },
   { to: '/dependencies', label: 'Dependencies', icon: GitBranch },
   { to: '/forecasts', label: 'Forecasts', icon: TrendingUp },
+  { to: '/simulation', label: 'Simulation Lab', icon: FlaskConical, highlight: true },
 ];
 
 export default function Sidebar({ isOpen, onClose }) {
@@ -61,8 +65,12 @@ export default function Sidebar({ isOpen, onClose }) {
                 className={({ isActive }) => `
                   flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold tracking-wide transition-all
                   ${isActive 
-                    ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30 shadow-sm shadow-sky-500/10' 
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'}
+                    ? item.highlight
+                      ? 'bg-sky-500/20 text-sky-300 border border-sky-400/40 shadow-sm shadow-sky-500/10'
+                      : 'bg-sky-500/15 text-sky-400 border border-sky-500/30 shadow-sm shadow-sky-500/10'
+                    : item.highlight
+                      ? 'text-sky-400/70 hover:text-sky-300 hover:bg-sky-500/10 border border-transparent hover:border-sky-500/20'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'}
                 `}
               >
                 <Icon className="w-4 h-4 flex-shrink-0" />
